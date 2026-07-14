@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tigress-ncr-tools"
+version = "0.1.0"
+description = "Lightweight readers and command-line tools for TIGRESS-NCR outputs"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "matplotlib",
+  "numpy",
+  "pandas",
+]
+
+[project.scripts]
+check-suite = "tigress_ncr_tools.check_suite:main"
+plot-suite-hst = "tigress_ncr_tools.plot_suite_hst:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
