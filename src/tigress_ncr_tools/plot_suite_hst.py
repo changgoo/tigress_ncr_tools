@@ -9,9 +9,32 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .check_suite import PROBLEM, failure_reason, model_status, progress_mtime, slurm_jobs
+from .check_suite import (
+    PROBLEM,
+    application_exit_code,
+    failure_reason,
+    model_status,
+    progress_mtime,
+    slurm_jobs,
+)
 from pathena.hst_reader import read_hst
 from pathena.units import star_particle_units, tigress_units
+
+STATUS_COLORS = {
+    "RUNNING": "tab:blue",
+    "COMPLETING": "tab:blue",
+    "PENDING": "tab:orange",
+    "CONFIGURING": "tab:orange",
+    "REQUEUED": "tab:purple",
+    "COMPLETE": "tab:green",
+    "CANCELLED": "0.4",
+    "UNKNOWN": "0.4",
+}
+
+
+def status_color(status):
+    """Return a consistent badge color for a suite status."""
+    return "red" if status in PROBLEM else STATUS_COLORS.get(status, "0.4")
 
 
 def model_history(model):
@@ -112,7 +135,10 @@ def plot_sfr_grid(models, outfile, jobs=None):
         job = jobs.get(model.name)
         since = job.get("start") if job else None
         reason = failure_reason(model, since=since)
-        return model_status(model, job, reason, progress=progress_mtime(model))
+        return model_status(
+            model, job, reason, progress=progress_mtime(model),
+            app_exit=application_exit_code(model, since),
+        )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         statuses = dict(zip((model for model, _ in models),
@@ -127,9 +153,11 @@ def plot_sfr_grid(models, outfile, jobs=None):
         else:
             axis.text(0.5, 0.5, "no history", ha="center", va="center", transform=axis.transAxes)
         status, _ = statuses[model]
-        if status in PROBLEM:
-            axis.text(0.03, 0.95, status, color="red", weight="bold",
-                      va="top", transform=axis.transAxes)
+        color = status_color(status)
+        axis.text(0.03, 0.95, status, color=color, weight="bold", va="top",
+                  bbox={"facecolor": "white", "edgecolor": color,
+                        "alpha": 0.75, "pad": 1.5},
+                  transform=axis.transAxes)
         axis.grid(alpha=0.15)
     for axis in axes[-1]:
         axis.set_xlabel("time [Myr]")

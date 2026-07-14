@@ -1,9 +1,20 @@
 import os
 from pathlib import Path
 
-from tigress_ncr_tools.check_suite import PROBLEM, failure_reason, model_status, parse_sacct
+from tigress_ncr_tools.check_suite import (
+    PROBLEM,
+    application_exit_code,
+    failure_reason,
+    model_status,
+    parse_sacct,
+)
 from pathena.hst_reader import read_hst
-from tigress_ncr_tools.plot_suite_hst import histories, plot_dashboard, plot_sfr_grid
+from tigress_ncr_tools.plot_suite_hst import (
+    histories,
+    plot_dashboard,
+    plot_sfr_grid,
+    status_color,
+)
 
 
 def test_hst_suite_tools(tmp_path):
@@ -22,6 +33,15 @@ def test_hst_suite_tools(tmp_path):
     (model / "err.txt").write_text("### Fatal error: mass cannot be negative!\n")
     assert model_status(model, job)[0] == "FAILED"
     assert {"FAILED", "STALLED", "TIMEOUT"} <= PROBLEM
+    assert status_color("FAILED") == "red"
+    assert status_color("RUNNING") == "tab:blue"
+    assert status_color("PENDING") == "tab:orange"
+    assert status_color("COMPLETE") == "tab:green"
+
+    slurm_out = model / "ncr-123.out"
+    slurm_out.write_text("EXITCODE = 0\npost-processing failed\n")
+    assert application_exit_code(model) == 0
+    assert model_status(model, job, reason="", app_exit=0)[0] == "COMPLETE"
 
     running = parse_sacct(
         "124|R8_8pc_NCR_row0002|RUNNING|0:0|03:00:00|2026-07-13T10:00:00\n"

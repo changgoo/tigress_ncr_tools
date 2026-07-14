@@ -104,8 +104,28 @@ def progress_mtime(model_dir):
     return max((path.stat().st_mtime for path in paths), default=None)
 
 
+def application_exit_code(model_dir, since=None):
+    """Return Athena's exit code from the newest current-attempt Slurm log."""
+    paths = sorted(Path(model_dir).glob("ncr-*.out"),
+                   key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in paths:
+        if since is not None and path.stat().st_mtime < since:
+            continue
+        try:
+            with path.open("rb") as stream:
+                stream.seek(0, 2)
+                stream.seek(max(0, stream.tell() - 8192))
+                text = stream.read().decode(errors="replace")
+        except OSError:
+            continue
+        matches = re.findall(r"^EXITCODE\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+        if matches:
+            return int(matches[-1])
+    return None
+
+
 def model_status(model_dir, job, reason=None, progress=None, now=None,
-                 stale_seconds=7200.0):
+                 stale_seconds=7200.0, app_exit=None):
     since = job.get("start") if job else None
     reason = failure_reason(model_dir, since=since) if reason is None else reason
     if job and job["state"] in {"PENDING", "CONFIGURING", "REQUEUED"}:
@@ -123,6 +143,10 @@ def model_status(model_dir, job, reason=None, progress=None, now=None,
         if stale_seconds > 0.0 and idle > stale_seconds:
             return "STALLED", f"no progress output for {idle / 3600.0:.1f}h"
         return job["state"], ""
+    # Athena can finish successfully while summary plotting or movie creation
+    # makes the enclosing batch job fail. Treat the simulation as complete.
+    if app_exit == 0:
+        return "COMPLETE", ""
     if reason:
         return "FAILED", reason
     if job:
@@ -145,7 +169,8 @@ def main(argv=None):
     def inspect(model):
         job = jobs.get(model.name)
         since = job.get("start") if job else None
-        return history_time(model), failure_reason(model, since), progress_mtime(model)
+        return (history_time(model), failure_reason(model, since),
+                progress_mtime(model), application_exit_code(model, since))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         checks = dict(zip(models, pool.map(inspect, models)))
@@ -153,10 +178,11 @@ def main(argv=None):
     print(f"{'MODEL':28} {'JOBID':>9} {'STATUS':>10} {'ELAPSED':>11} {'T':>8}  REASON")
     for model in models:
         job = jobs.get(model.name)
-        time, log_failure, progress = checks[model]
+        time, log_failure, progress, app_exit = checks[model]
         status, reason = model_status(
             model, job, log_failure, progress=progress,
             stale_seconds=args.stale_hours * 3600.0,
+            app_exit=app_exit,
         )
         counts[status] += 1
         print(f"{model.name:28} {(job or {}).get('jobid', '-'):>9} {status:>10} "
