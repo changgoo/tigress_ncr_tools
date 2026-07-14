@@ -773,12 +773,17 @@ def plot_all(proj, ncol=4, norm="auto", cmap=None):
     return fig
 
 
-def plot_physical_maps(proj):
+def plot_physical_maps(proj, hi_green_scale=0.65):
     """Plot the standard physically derived diagnostics from one proj2d frame.
 
     Each panel is shown only when its required fields are present. Line
-    integrals cancel in weighted ratios.
+    integrals cancel in weighted ratios. ``hi_green_scale`` controls the H I
+    contribution to the green channel of the three-color hydrogen-phase map;
+    use ``1.0`` for the original full-strength green channel.
     """
+    if hi_green_scale < 0:
+        raise ValueError("hi_green_scale must be non-negative")
+
     fields = proj["fields"]
     b_to_microgauss = tigress_units()["magnetic_field_microgauss"]
 
@@ -792,6 +797,7 @@ def plot_physical_maps(proj):
         species = np.stack((2.0*fields["nH2"], fields["nHI"], nHII), axis=-1)
         scale = np.nanpercentile(species, 99)
         rgb = np.arcsinh(10.0*species/(scale if scale > 0 else 1.0)) / np.arcsinh(10.0)
+        rgb[..., 1] *= hi_green_scale
         panels.append(("H phases: 2H2(R)/HI(G)/HII(B)", np.clip(rgb, 0, 1), None, None))
     if "nH" in fields:
         panels.append((r"$N_{\rm H}\;[\mathrm{cm}^{-2}]$",
@@ -809,10 +815,14 @@ def plot_physical_maps(proj):
     if all(name in fields for name in ("nHI", "nHI*Vlos", "nHI*Vlos2")):
         variance = ratio(fields["nHI*Vlos2"], fields["nHI"]) - mean**2
         panels.append((r"$\sigma_{v,{\rm HI}}$", np.sqrt(np.clip(variance, 0, None)), "viridis", "linear"))
+    wnm_norm = None
+    if "nHI_WNM" in fields:
+        wnm_norm = _field_norm(fields["nHI_WNM"]*PC_CGS, "log")
     for name, title in (("nHI_CNM", r"$N_{\rm HI}(T<500\,K)\;[\mathrm{cm}^{-2}]$"),
                         ("nHI_WNM", r"$N_{\rm HI}(T>6000\,K)\;[\mathrm{cm}^{-2}]$")):
         if name in fields:
-            panels.append((title, fields[name]*PC_CGS, "magma", "log"))
+            panels.append((title, fields[name]*PC_CGS, "magma",
+                           wnm_norm if wnm_norm is not None else "log"))
     if not panels:
         raise ValueError("no supported physical maps found in proj2d frame")
 
