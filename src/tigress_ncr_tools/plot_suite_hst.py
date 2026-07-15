@@ -31,6 +31,8 @@ STATUS_COLORS = {
     "UNKNOWN": "0.4",
 }
 
+SCATTER_TIME_RANGE_MYR = (200.0, 600.0)
+
 
 def status_color(status):
     """Return a consistent badge color for a suite status."""
@@ -57,6 +59,12 @@ def vertical_size(model, default=4096.0):
 def positive(values):
     values = np.asarray(values, dtype=float)
     return np.where(values > 0, values, np.nan)
+
+
+def time_range_mask(time, bounds=SCATTER_TIME_RANGE_MYR):
+    """Select samples inside an inclusive physical-time interval."""
+    time = np.asarray(time, dtype=float)
+    return (time >= bounds[0]) & (time <= bounds[1])
 
 
 def histories(suite):
@@ -92,13 +100,16 @@ def plot_dashboard(models, outfile):
         pressure = positive((hst["Pth_mid"] + hst["Pturb_mid"]) * pressure_unit)
         surface_unit = particle_units["mass_msun"] * vertical_size(model)
         gas = positive(hst["mass"] * surface_unit)
+        scatter_samples = time_range_mask(time)
         axes[0].plot(time, sfr, color=color, label=label)
         axes[1].plot(time, positive(hst["nmid"]), color=color)
         axes[2].plot(time, pressure, color=color)
         axes[3].plot(time, positive(hst["msp"] * surface_unit * 1e6), color=color)
         axes[4].plot(time, gas, color=color)
-        gas_axis.scatter(gas, sfr, color=color, s=2, alpha=0.25)
-        pressure_axis.scatter(pressure, sfr, color=color, s=2, alpha=0.25)
+        gas_axis.scatter(gas[scatter_samples], sfr[scatter_samples],
+                         color=color, s=2, alpha=0.25)
+        pressure_axis.scatter(pressure[scatter_samples], sfr[scatter_samples],
+                              color=color, s=2, alpha=0.25)
 
     labels = [r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]",
               r"$n_{\rm mid}$ [$\mathrm{cm}^{-3}$]",
@@ -113,11 +124,15 @@ def plot_dashboard(models, outfile):
     axes[-1].set_xlabel("time [Myr]")
     gas_axis.set(xlabel=r"$\Sigma_{\rm gas}$ [$M_\odot\,\mathrm{pc}^{-2}$]",
                  ylabel=r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]")
-    pressure_axis.set(xlabel=r"$P_{\rm mid}/k_B$ [$\mathrm{K\,cm}^{-3}$]",
+    pressure_axis.set(xlabel=r"$(P_{\rm th}+P_{\rm turb})_{\rm mid}/k_B$ [$\mathrm{K\,cm}^{-3}$]",
                       ylabel=r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]")
     for axis in (gas_axis, pressure_axis):
+        axis.set_title(r"$200 \leq t \leq 600\ \mathrm{Myr}$")
         axis.set_xscale("log")
         axis.set_yscale("log")
+        if not np.isfinite(axis.dataLim.get_points()).all():
+            axis.set_xlim(1.0, 10.0)
+            axis.set_ylim(1.0, 10.0)
         axis.grid(alpha=0.2)
     axes[0].legend(title="row", ncol=4, fontsize=7, title_fontsize=8)
     fig.tight_layout()

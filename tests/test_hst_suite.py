@@ -8,26 +8,46 @@ from tigress_ncr_tools.check_suite import (
     model_status,
     parse_sacct,
 )
-from pathena.hst_reader import read_hst
+from pathena.hst_reader import read_hst, restart_survivor_indices
 from tigress_ncr_tools.plot_suite_hst import (
     histories,
     plot_dashboard,
     plot_sfr_grid,
     status_color,
+    time_range_mask,
 )
 
 
 def test_hst_suite_tools(tmp_path):
+    assert time_range_mask([199.9, 200.0, 400.0, 600.0, 600.1]).tolist() == [
+        False, True, True, True, False,
+    ]
+
     model = tmp_path / "R8_8pc_NCR_row0002"
     hst_dir = model / "hst"
     hst_dir.mkdir(parents=True)
     header = "# Athena history dump volume=1.0e+00\n# [1]=time [2]=sfr10 [3]=sfr40 [4]=sfr100 [5]=nmid [6]=Pth_mid [7]=Pturb_mid [8]=msp [9]=Lesc0 [10]=Ltot0 [11]=mass\n#\n"
-    rows = "0 1 2 3 4 5 6 7 8 16 2\n1 2 3 4 5 6 7 8 9 18 3\n2 3\n"
+    rows = (
+        "0 1 2 3 4 5 6 7 8 16 2\n"
+        "1 2 3 4 5 6 7 8 9 18 3\n"
+        "2 30 3 4 5 6 7 8 9 18 4\n"
+        "3 40 3 4 5 6 7 8 9 18 5\n"
+        "2 300 3 4 5 6 7 8 9 18 40\n"
+        "3 400 3 4 5 6 7 8 9 18 50\n"
+        "4 500 3 4 5 6 7 8 9 18 60\n"
+        "5 3\n"
+    )
     path = hst_dir / "R8_8pc_NCR.hst"
     path.write_text(header + rows)
     data = read_hst(path)
-    assert data["time"].tolist() == [0.0, 1.0]
+    assert data["time"].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert data["sfr10"].tolist() == [1.0, 2.0, 300.0, 400.0, 500.0]
     assert data["vol"] == 1.0
+    raw = read_hst(path, prune_restarts=False)
+    assert raw["time"].tolist() == [0.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0]
+    assert restart_survivor_indices(
+        [0.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 1.5, 2.5]
+    ).tolist() == [0, 1, 7, 8]
 
     job = parse_sacct("123|R8_8pc_NCR_row0002|COMPLETED|0:0|01:02:03\n")[model.name]
     (model / "err.txt").write_text("### Fatal error: mass cannot be negative!\n")

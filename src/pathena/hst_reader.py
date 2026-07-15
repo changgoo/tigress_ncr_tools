@@ -8,8 +8,43 @@ import numpy as np
 _COLUMN = re.compile(r"\[(\d+)]\s*=\s*(.*?)(?=\s+\[\d+]\s*=|$)")
 
 
-def read_hst(filename, max_rows=None):
-    """Return history columns as NumPy arrays, skipping partial data rows."""
+def restart_survivor_indices(time):
+    """Return rows on the latest branch of an append-only history file.
+
+    Athena appends to an existing history after a restart.  When the restart
+    time precedes the last dump, the old rows at and beyond that time describe
+    an abandoned branch.  A stack removes that branch while preserving file
+    order and the later value at a duplicate timestamp.
+    """
+    time = np.asarray(time, dtype=float)
+    survivors = []
+    for index, value in enumerate(time):
+        if not np.isfinite(value):
+            continue
+        while survivors and time[survivors[-1]] >= value:
+            survivors.pop()
+        survivors.append(index)
+    return np.asarray(survivors, dtype=int)
+
+
+def strip_restart_branches(history, time_key="time"):
+    """Return a history dictionary with abandoned restart branches removed."""
+    if time_key not in history:
+        return history
+    time = np.asarray(history[time_key])
+    keep = restart_survivor_indices(time)
+    if len(keep) == len(time):
+        return history
+    return {
+        name: value[keep]
+        if isinstance(value, np.ndarray) and value.ndim and len(value) == len(time)
+        else value
+        for name, value in history.items()
+    }
+
+
+def read_hst(filename, max_rows=None, prune_restarts=True):
+    """Return history columns, skipping partial rows and abandoned branches."""
     first_line = ""
     header = None
     raw = np.array([])
@@ -61,4 +96,6 @@ def read_hst(filename, max_rows=None):
     volume = re.search(r"volume=([+\-\d.eE]+)", first_line)
     if volume:
         result["vol"] = float(volume.group(1))
+    if prune_restarts:
+        result = strip_restart_branches(result)
     return result
