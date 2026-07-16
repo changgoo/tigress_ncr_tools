@@ -32,6 +32,7 @@ STATUS_COLORS = {
 }
 
 SCATTER_TIME_RANGE_MYR = (200.0, 600.0)
+NUMBER_PATTERN = r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?"
 
 
 def status_color(status):
@@ -54,6 +55,31 @@ def vertical_size(model, default=4096.0):
     lo = re.search(r"domain1/x3min=([+\-\d.eE]+)", text)
     hi = re.search(r"domain1/x3max=([+\-\d.eE]+)", text)
     return float(hi.group(1)) - float(lo.group(1)) if lo and hi else default
+
+
+def input_parameter(model, name):
+    """Read a problem parameter from a generated Slurm script or athinput."""
+    override = re.compile(
+        rf"problem/{re.escape(name)}=({NUMBER_PATTERN})(?:\s|$)"
+    )
+    assignment = re.compile(
+        rf"^\s*{re.escape(name)}\s*=\s*({NUMBER_PATTERN})(?:\s|$)",
+        re.MULTILINE,
+    )
+    for pattern, paths in (
+        (override, sorted(model.glob("*.slurm"))),
+        (assignment, sorted(model.glob("athinput*"))),
+    ):
+        for path in paths:
+            match = pattern.search(path.read_text(errors="replace"))
+            if match:
+                return float(match.group(1))
+    return np.nan
+
+
+def stellar_surface_density(model, msp, surface_unit):
+    """Return input old stars plus the time-dependent star-particle column."""
+    return input_parameter(model, "SurfS") + np.asarray(msp) * surface_unit
 
 
 def positive(values):
@@ -81,11 +107,15 @@ def histories(suite):
 
 def plot_dashboard(models, outfile):
     fig = plt.figure(figsize=(16, 13))
-    grid = fig.add_gridspec(5, 2, width_ratios=(2.2, 1))
-    axes = [fig.add_subplot(grid[0, 0])]
-    axes.extend(fig.add_subplot(grid[row, 0], sharex=axes[0]) for row in range(1, 5))
-    gas_axis = fig.add_subplot(grid[:2, 1])
-    pressure_axis = fig.add_subplot(grid[2:, 1])
+    grid = fig.add_gridspec(1, 2, width_ratios=(2.2, 1))
+    history_grid = grid[0, 0].subgridspec(5, 1)
+    scatter_grid = grid[0, 1].subgridspec(3, 1, hspace=0.35)
+    axes = [fig.add_subplot(history_grid[0, 0])]
+    axes.extend(fig.add_subplot(history_grid[row, 0], sharex=axes[0])
+                for row in range(1, 5))
+    gas_axis = fig.add_subplot(scatter_grid[0, 0])
+    star_axis = fig.add_subplot(scatter_grid[1, 0])
+    pressure_axis = fig.add_subplot(scatter_grid[2, 0])
     colors = plt.colormaps["turbo"](np.linspace(0, 1, max(len(models), 1)))
     particle_units = star_particle_units()
     time_unit = particle_units["time_myr"]
@@ -100,14 +130,18 @@ def plot_dashboard(models, outfile):
         pressure = positive((hst["Pth_mid"] + hst["Pturb_mid"]) * pressure_unit)
         surface_unit = particle_units["mass_msun"] * vertical_size(model)
         gas = positive(hst["mass"] * surface_unit)
+        sigma_star = positive(stellar_surface_density(model, hst["msp"],
+                                                      surface_unit))
         scatter_samples = time_range_mask(time)
         axes[0].plot(time, sfr, color=color, label=label)
         axes[1].plot(time, positive(hst["nmid"]), color=color)
         axes[2].plot(time, pressure, color=color)
-        axes[3].plot(time, positive(hst["msp"] * surface_unit * 1e6), color=color)
+        axes[3].plot(time, sigma_star * 1e6, color=color)
         axes[4].plot(time, gas, color=color)
         gas_axis.scatter(gas[scatter_samples], sfr[scatter_samples],
                          color=color, s=2, alpha=0.25)
+        star_axis.scatter(sigma_star[scatter_samples], sfr[scatter_samples],
+                          color=color, s=2, alpha=0.25)
         pressure_axis.scatter(pressure[scatter_samples], sfr[scatter_samples],
                               color=color, s=2, alpha=0.25)
 
@@ -124,9 +158,11 @@ def plot_dashboard(models, outfile):
     axes[-1].set_xlabel("time [Myr]")
     gas_axis.set(xlabel=r"$\Sigma_{\rm gas}$ [$M_\odot\,\mathrm{pc}^{-2}$]",
                  ylabel=r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]")
+    star_axis.set(xlabel=r"$\Sigma_*=\Sigma_{\rm star,input}+\Sigma_{\rm sp}$ [$M_\odot\,\mathrm{pc}^{-2}$]",
+                  ylabel=r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]")
     pressure_axis.set(xlabel=r"$(P_{\rm th}+P_{\rm turb})_{\rm mid}/k_B$ [$\mathrm{K\,cm}^{-3}$]",
                       ylabel=r"$\Sigma_{\rm SFR,10}$ [$M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}$]")
-    for axis in (gas_axis, pressure_axis):
+    for axis in (gas_axis, star_axis, pressure_axis):
         axis.set_title(r"$200 \leq t \leq 600\ \mathrm{Myr}$")
         axis.set_xscale("log")
         axis.set_yscale("log")

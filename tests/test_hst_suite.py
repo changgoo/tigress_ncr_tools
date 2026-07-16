@@ -11,8 +11,10 @@ from tigress_ncr_tools.check_suite import (
 from pathena.hst_reader import read_hst, restart_survivor_indices
 from tigress_ncr_tools.plot_suite_hst import (
     histories,
+    input_parameter,
     plot_dashboard,
     plot_sfr_grid,
+    stellar_surface_density,
     status_color,
     time_range_mask,
 )
@@ -39,6 +41,13 @@ def test_hst_suite_tools(tmp_path):
     )
     path = hst_dir / "R8_8pc_NCR.hst"
     path.write_text(header + rows)
+    (model / "model.slurm").write_text(
+        "srun athena problem/SurfS=42.5 problem/surf=10\n"
+    )
+    assert input_parameter(model, "SurfS") == 42.5
+    assert stellar_surface_density(model, [1.0, 2.0], 0.5).tolist() == [
+        43.0, 43.5,
+    ]
     data = read_hst(path)
     assert data["time"].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert data["sfr10"].tolist() == [1.0, 2.0, 300.0, 400.0, 500.0]
