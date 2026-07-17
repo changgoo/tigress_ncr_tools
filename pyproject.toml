@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
+archive-tigress-snapshots = "tigress_ncr_tools.archive_snapshots:main"
 check-suite = "tigress_ncr_tools.check_suite:main"
 plot-suite-hst = "tigress_ncr_tools.plot_suite_hst:main"
 
