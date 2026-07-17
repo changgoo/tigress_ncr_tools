@@ -17,10 +17,17 @@ to Athena's `python/summary_plot.py` and related analysis scripts.
 ```bash
 check-suite /anvil/scratch/x-ckim5/TIGRESS-NCR
 plot-suite-hst /anvil/scratch/x-ckim5/TIGRESS-NCR
+
+# PBS Professional (for example, NASA Athena) is detected automatically.
+check-suite /nobackup/$USER/TIGRESS-NCR
+plot-suite-hst /nobackup/$USER/TIGRESS-NCR
 ```
 
-`check-suite` combines Slurm accounting, current-attempt error logs, history
-progress, and output age. `plot-suite-hst` writes `hst_summary.png` and
+`check-suite` combines Slurm or PBS accounting, current-attempt error logs,
+history progress, and output age. Run directories are discovered from their
+generated batch scripts or simulation outputs rather than a fixed model-name
+pattern. Use `--scheduler` or `--model-glob` to override auto-detection.
+`plot-suite-hst` writes `hst_summary.png` and
 `hst_sfr_grid.png` in the suite directory unless `--output-dir` is supplied.
 
 ## Snapshot archiving

@@ -2,7 +2,11 @@
 """Print the current state of an Athena model suite."""
 
 import argparse
+import getpass
+import json
+import os
 import re
+import shutil
 import subprocess
 import time as time_module
 from collections import Counter
@@ -40,13 +44,16 @@ def failure_reason(model_dir, since=None):
 
 
 def parse_start(value):
-    """Convert Slurm's local ISO timestamp to epoch seconds when available."""
+    """Convert a Slurm ISO or PBS timestamp to epoch seconds when available."""
     if not value or value in {"None", "Unknown", "N/A"}:
         return None
     try:
         return datetime.fromisoformat(value).timestamp()
     except ValueError:
-        return None
+        try:
+            return datetime.strptime(value, "%a %b %d %H:%M:%S %Y").timestamp()
+        except ValueError:
+            return None
 
 
 def parse_sacct(text):
@@ -72,6 +79,108 @@ def slurm_jobs():
     except (FileNotFoundError, subprocess.CalledProcessError):
         return {}
     return parse_sacct(result.stdout)
+
+
+PBS_STATES = {
+    "B": "RUNNING",
+    "E": "COMPLETING",
+    "H": "PENDING",
+    "M": "PENDING",
+    "Q": "PENDING",
+    "R": "RUNNING",
+    "S": "SUSPENDED",
+    "T": "PENDING",
+    "U": "SUSPENDED",
+    "W": "PENDING",
+    "X": "COMPLETED",
+}
+
+
+def parse_pbs_json(text):
+    """Return the newest full PBS record for each job name."""
+    payload = json.loads(text)
+    jobs = {}
+    submitted = {}
+    for full_jobid, record in payload.get("Jobs", {}).items():
+        name = record.get("Job_Name")
+        if not name:
+            continue
+        raw_state = record.get("job_state", "")
+        exit_status = record.get("Exit_status")
+        if raw_state == "F":
+            state = "COMPLETED" if exit_status == 0 else "FAILED"
+        else:
+            state = PBS_STATES.get(raw_state, raw_state or "UNKNOWN")
+        resources = record.get("resources_used", {})
+        submitted_at = parse_start(record.get("qtime") or record.get("ctime"))
+        if name in jobs and (submitted_at or 0.0) < (submitted[name] or 0.0):
+            continue
+        submitted[name] = submitted_at
+        jobs[name] = dict(
+            jobid=full_jobid.split(".", 1)[0],
+            state=state,
+            elapsed=resources.get("walltime", "-"),
+            start=parse_start(record.get("stime")),
+            exit_status=exit_status,
+            output_path=record.get("Output_Path", ""),
+        )
+    return jobs
+
+
+def pbs_jobs(username=None):
+    """Read active and recent PBS jobs using full, untruncated JSON records."""
+    username = username or getpass.getuser()
+    try:
+        selected = subprocess.run(
+            ["qselect", "-x", "-u", username],
+            check=True, text=True, capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {}
+    jobids = selected.stdout.split()
+    jobs = {}
+    # Avoid exceeding command-line limits for users with substantial job history.
+    for offset in range(0, len(jobids), 200):
+        try:
+            result = subprocess.run(
+                ["qstat", "-x", "-f", "-F", "json", *jobids[offset:offset + 200]],
+                check=True, text=True, capture_output=True,
+            )
+            jobs.update(parse_pbs_json(result.stdout))
+        except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError):
+            return {}
+    return jobs
+
+
+def scheduler_jobs(scheduler="auto"):
+    """Return scheduler records from Slurm, PBS, or neither."""
+    if scheduler == "none":
+        return {}
+    if scheduler == "auto":
+        if shutil.which("qselect") and shutil.which("qstat"):
+            scheduler = "pbs"
+        elif shutil.which("sacct"):
+            scheduler = "slurm"
+        else:
+            return {}
+    if scheduler == "pbs":
+        return pbs_jobs()
+    if scheduler == "slurm":
+        return slurm_jobs()
+    raise ValueError(f"unknown scheduler {scheduler!r}")
+
+
+def discover_models(suite, model_glob="*"):
+    """Find immediate run directories without assuming a naming convention."""
+    models = []
+    for model in sorted(Path(suite).glob(model_glob)):
+        if not model.is_dir():
+            continue
+        generated_script = any(model.glob("*.slurm")) or any(model.glob("*.pbs"))
+        output = (model / "hst").is_dir() or any(model.glob("out*.txt"))
+        if generated_script or output:
+            models.append(model)
+    return models
 
 
 def history_time(model_dir):
@@ -104,10 +213,17 @@ def progress_mtime(model_dir):
     return max((path.stat().st_mtime for path in paths), default=None)
 
 
-def application_exit_code(model_dir, since=None):
-    """Return Athena's exit code from the newest current-attempt Slurm log."""
+def application_exit_code(model_dir, since=None, job=None):
+    """Return Athena's exit code from the newest current-attempt batch log."""
     paths = sorted(Path(model_dir).glob("ncr-*.out"),
                    key=lambda path: path.stat().st_mtime, reverse=True)
+    output_path = (job or {}).get("output_path", "")
+    if output_path:
+        # PBS reports remote paths as ``host:/absolute/path``.
+        output_path = output_path.split(":", 1)[-1]
+        path = Path(os.path.expandvars(os.path.expanduser(output_path)))
+        if path.is_file() and path not in paths:
+            paths.insert(0, path)
     for path in paths:
         if since is not None and path.stat().st_mtime < since:
             continue
@@ -152,7 +268,7 @@ def model_status(model_dir, job, reason=None, progress=None, now=None,
     if job:
         state = job["state"]
         return ("COMPLETE" if state == "COMPLETED" else state), ""
-    return "UNKNOWN", "no Slurm record; file-only fallback"
+    return "UNKNOWN", "no scheduler record; file-only fallback"
 
 
 def main(argv=None):
@@ -162,15 +278,23 @@ def main(argv=None):
         "--stale-hours", type=float, default=2.0,
         help="mark an active job STALLED after this many hours without output (default: 2)",
     )
+    parser.add_argument(
+        "--model-glob", default="*",
+        help="glob for model directory names (default: discover all run directories)",
+    )
+    parser.add_argument(
+        "--scheduler", choices=("auto", "slurm", "pbs", "none"), default="auto",
+        help="batch scheduler used for job states (default: auto-detect)",
+    )
     args = parser.parse_args(argv)
-    models = sorted(Path(args.suite).glob("R8_8pc_NCR_row????"))
-    jobs = slurm_jobs()
+    models = discover_models(args.suite, args.model_glob)
+    jobs = scheduler_jobs(args.scheduler)
     counts = Counter()
     def inspect(model):
         job = jobs.get(model.name)
         since = job.get("start") if job else None
         return (history_time(model), failure_reason(model, since),
-                progress_mtime(model), application_exit_code(model, since))
+                progress_mtime(model), application_exit_code(model, since, job))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         checks = dict(zip(models, pool.map(inspect, models)))

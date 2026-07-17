@@ -2,6 +2,7 @@
 """Make quick history summaries for all models in an Athena suite."""
 
 import argparse
+import math
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -12,10 +13,11 @@ import numpy as np
 from .check_suite import (
     PROBLEM,
     application_exit_code,
+    discover_models,
     failure_reason,
     model_status,
     progress_mtime,
-    slurm_jobs,
+    scheduler_jobs,
 )
 from pathena.hst_reader import read_hst
 from pathena.units import star_particle_units, tigress_units
@@ -48,17 +50,20 @@ def model_history(model):
 
 
 def vertical_size(model, default=4096.0):
-    slurms = list(model.glob("*.slurm"))
-    if not slurms:
+    scripts = sorted(model.glob("*.slurm")) + sorted(model.glob("*.pbs"))
+    if not scripts:
         return default
-    text = slurms[0].read_text(errors="replace")
-    lo = re.search(r"domain1/x3min=([+\-\d.eE]+)", text)
-    hi = re.search(r"domain1/x3max=([+\-\d.eE]+)", text)
-    return float(hi.group(1)) - float(lo.group(1)) if lo and hi else default
+    for script in scripts:
+        text = script.read_text(errors="replace")
+        lo = re.search(r"domain1/x3min=([+\-\d.eE]+)", text)
+        hi = re.search(r"domain1/x3max=([+\-\d.eE]+)", text)
+        if lo and hi:
+            return float(hi.group(1)) - float(lo.group(1))
+    return default
 
 
 def input_parameter(model, name):
-    """Read a problem parameter from a generated Slurm script or athinput."""
+    """Read a problem parameter from a generated batch script or athinput."""
     override = re.compile(
         rf"problem/{re.escape(name)}=({NUMBER_PATTERN})(?:\s|$)"
     )
@@ -67,7 +72,7 @@ def input_parameter(model, name):
         re.MULTILINE,
     )
     for pattern, paths in (
-        (override, sorted(model.glob("*.slurm"))),
+        (override, sorted(model.glob("*.slurm")) + sorted(model.glob("*.pbs"))),
         (assignment, sorted(model.glob("athinput*"))),
     ):
         for path in paths:
@@ -93,9 +98,9 @@ def time_range_mask(time, bounds=SCATTER_TIME_RANGE_MYR):
     return (time >= bounds[0]) & (time <= bounds[1])
 
 
-def histories(suite):
+def histories(suite, model_glob="*"):
     result = []
-    for model in sorted(Path(suite).glob("R8_8pc_NCR_row????")):
+    for model in discover_models(suite, model_glob):
         try:
             data = model_history(model)
         except (OSError, ValueError) as error:
@@ -124,7 +129,7 @@ def plot_dashboard(models, outfile):
     for color, (model, hst) in zip(colors, models):
         if not hst or not len(hst.get("time", [])):
             continue
-        label = model.name.rsplit("row", 1)[-1]
+        label = model.name
         time = hst["time"] * time_unit
         sfr = positive(hst["sfr10"])
         pressure = positive((hst["Pth_mid"] + hst["Pturb_mid"]) * pressure_unit)
@@ -170,14 +175,21 @@ def plot_dashboard(models, outfile):
             axis.set_xlim(1.0, 10.0)
             axis.set_ylim(1.0, 10.0)
         axis.grid(alpha=0.2)
-    axes[0].legend(title="row", ncol=4, fontsize=7, title_fontsize=8)
+    axes[0].legend(title="model", ncol=4, fontsize=7, title_fontsize=8)
     fig.tight_layout()
     fig.savefig(outfile, dpi=140)
     plt.close(fig)
 
 
 def plot_sfr_grid(models, outfile, jobs=None):
-    fig, axes = plt.subplots(4, 8, figsize=(18, 9), sharex=True, sharey=True)
+    nmodels = max(len(models), 1)
+    ncols = min(8, nmodels)
+    nrows = math.ceil(nmodels / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(max(6, 2.25 * ncols), max(3, 2.25 * nrows)),
+        sharex=True, sharey=True, squeeze=False,
+    )
     time_unit = star_particle_units()["time_myr"]
 
     jobs = jobs or {}
@@ -188,7 +200,7 @@ def plot_sfr_grid(models, outfile, jobs=None):
         reason = failure_reason(model, since=since)
         return model_status(
             model, job, reason, progress=progress_mtime(model),
-            app_exit=application_exit_code(model, since),
+            app_exit=application_exit_code(model, since, job),
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -196,7 +208,7 @@ def plot_sfr_grid(models, outfile, jobs=None):
                             pool.map(inspect, (model for model, _ in models))))
     for axis, item in zip(axes.flat, models):
         model, hst = item
-        axis.set_title("row" + model.name.rsplit("row", 1)[-1], fontsize=9)
+        axis.set_title(model.name, fontsize=9)
         if hst and len(hst.get("time", [])):
             time = hst["time"] * time_unit
             for field, style in zip(("sfr10", "sfr40", "sfr100"), ("-", "--", ":")):
@@ -210,6 +222,8 @@ def plot_sfr_grid(models, outfile, jobs=None):
                         "alpha": 0.75, "pad": 1.5},
                   transform=axis.transAxes)
         axis.grid(alpha=0.15)
+    for axis in axes.flat[len(models):]:
+        axis.set_visible(False)
     for axis in axes[-1]:
         axis.set_xlabel("time [Myr]")
     for axis in axes[:, 0]:
@@ -224,12 +238,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", nargs="?", default="/anvil/scratch/x-ckim5/TIGRESS-NCR")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--model-glob", default="*",
+        help="glob for model directory names (default: discover all run directories)",
+    )
+    parser.add_argument(
+        "--scheduler", choices=("auto", "slurm", "pbs", "none"), default="auto",
+        help="batch scheduler used for status badges (default: auto-detect)",
+    )
     args = parser.parse_args(argv)
     output = args.output_dir or Path(args.suite)
     output.mkdir(parents=True, exist_ok=True)
-    models = histories(args.suite)
+    models = histories(args.suite, args.model_glob)
     plot_dashboard(models, output / "hst_summary.png")
-    plot_sfr_grid(models, output / "hst_sfr_grid.png", slurm_jobs())
+    plot_sfr_grid(models, output / "hst_sfr_grid.png", scheduler_jobs(args.scheduler))
     print(f"Wrote {output / 'hst_summary.png'}")
     print(f"Wrote {output / 'hst_sfr_grid.png'}")
 

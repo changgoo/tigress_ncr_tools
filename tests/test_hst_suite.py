@@ -1,11 +1,14 @@
+import json
 import os
 from pathlib import Path
 
 from tigress_ncr_tools.check_suite import (
     PROBLEM,
     application_exit_code,
+    discover_models,
     failure_reason,
     model_status,
+    parse_pbs_json,
     parse_sacct,
 )
 from pathena.hst_reader import read_hst, restart_survivor_indices
@@ -17,6 +20,7 @@ from tigress_ncr_tools.plot_suite_hst import (
     stellar_surface_density,
     status_color,
     time_range_mask,
+    vertical_size,
 )
 
 
@@ -25,7 +29,7 @@ def test_hst_suite_tools(tmp_path):
         False, True, True, True, False,
     ]
 
-    model = tmp_path / "R8_8pc_NCR_row0002"
+    model = tmp_path / "R8_8pc_NCR_Lxy1024_early"
     hst_dir = model / "hst"
     hst_dir.mkdir(parents=True)
     header = "# Athena history dump volume=1.0e+00\n# [1]=time [2]=sfr10 [3]=sfr40 [4]=sfr100 [5]=nmid [6]=Pth_mid [7]=Pturb_mid [8]=msp [9]=Lesc0 [10]=Ltot0 [11]=mass\n#\n"
@@ -41,10 +45,14 @@ def test_hst_suite_tools(tmp_path):
     )
     path = hst_dir / "R8_8pc_NCR.hst"
     path.write_text(header + rows)
-    (model / "model.slurm").write_text(
-        "srun athena problem/SurfS=42.5 problem/surf=10\n"
+    (model / "model.pbs").write_text(
+        "mpiexec athena problem/SurfS=42.5 problem/surf=10 "
+        "domain1/x3min=-2048 domain1/x3max=2048\n"
     )
     assert input_parameter(model, "SurfS") == 42.5
+    assert vertical_size(model) == 4096.0
+    (tmp_path / "restart_files").mkdir()
+    assert discover_models(tmp_path) == [model]
     assert stellar_surface_density(model, [1.0, 2.0], 0.5).tolist() == [
         43.0, 43.5,
     ]
@@ -58,7 +66,9 @@ def test_hst_suite_tools(tmp_path):
         [0.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 1.5, 2.5]
     ).tolist() == [0, 1, 7, 8]
 
-    job = parse_sacct("123|R8_8pc_NCR_row0002|COMPLETED|0:0|01:02:03\n")[model.name]
+    job = parse_sacct(
+        "123|R8_8pc_NCR_Lxy1024_early|COMPLETED|0:0|01:02:03\n"
+    )[model.name]
     (model / "err.txt").write_text("### Fatal error: mass cannot be negative!\n")
     assert model_status(model, job)[0] == "FAILED"
     assert {"FAILED", "STALLED", "TIMEOUT"} <= PROBLEM
@@ -73,7 +83,7 @@ def test_hst_suite_tools(tmp_path):
     assert model_status(model, job, reason="", app_exit=0)[0] == "COMPLETE"
 
     running = parse_sacct(
-        "124|R8_8pc_NCR_row0002|RUNNING|0:0|03:00:00|2026-07-13T10:00:00\n"
+        "124|R8_8pc_NCR_Lxy1024_early|RUNNING|0:0|03:00:00|2026-07-13T10:00:00\n"
     )[model.name]
     assert running["start"] is not None
     assert model_status(
@@ -89,6 +99,26 @@ def test_hst_suite_tools(tmp_path):
 
     os.utime(model / "err.txt", (100.0, 100.0))
     assert failure_reason(model, since=200.0) == ""
+
+    pbs_output = model / "model.o123"
+    pbs_output.write_text("EXITCODE = 0\npost-processing failed\n")
+    pbs = parse_pbs_json(json.dumps({
+        "Jobs": {
+            "123.pbs": {
+                "Job_Name": model.name,
+                "job_state": "F",
+                "Exit_status": 1,
+                "qtime": "Thu Jul 16 20:47:57 2026",
+                "stime": "Thu Jul 16 20:48:00 2026",
+                "resources_used": {"walltime": "00:01:00"},
+                "Output_Path": f"host:{pbs_output}",
+            }
+        }
+    }))[model.name]
+    assert pbs["state"] == "FAILED"
+    assert pbs["elapsed"] == "00:01:00"
+    assert application_exit_code(model, job=pbs) == 0
+    assert model_status(model, pbs, reason="", app_exit=0)[0] == "COMPLETE"
 
     output = tmp_path / "plots"
     output.mkdir()
