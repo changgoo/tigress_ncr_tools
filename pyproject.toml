@@ -19,6 +19,7 @@ archive-tigress-snapshots = "tigress_ncr_tools.archive_snapshots:main"
 check-suite = "tigress_ncr_tools.check_suite:main"
 plot-suite-hst = "tigress_ncr_tools.plot_suite_hst:main"
 plot-suite-projections = "tigress_ncr_tools.plot_suite_projections:main"
+surface-density-stats = "tigress_ncr_tools.surface_density_stats:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

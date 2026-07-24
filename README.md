@@ -25,6 +25,9 @@ plot-suite-hst /nobackup/$USER/TIGRESS-NCR
 # Pack the Lxy=4096, 2048, and 1024 pc late-run maps into one canvas.
 # The default suite is /tigress/changgoo/nasa_athena/TIGRESS-NCR.
 plot-suite-projections 30
+
+# Theta=0 PDFs and shear-corrected power spectra for all late runs.
+surface-density-stats /tigress/changgoo/nasa_athena/TIGRESS-NCR
 ```
 
 `check-suite` combines Slurm or PBS accounting, current-attempt error logs,
@@ -51,6 +54,36 @@ With `--movie`, the command uses the same ffmpeg workflow and defaults as
 `SUITE/movies/projection_thetaANGLE.mp4`. Codec auto-detection prefers
 `libx264` and falls back to `mpeg4`; `--movie-path`, `--codec`, `--crf`,
 `--qscale`, and `--bitrate` provide the same controls.
+
+## Surface-density statistics
+
+`surface-density-stats` reads the late-run `proj2d/theta0` maps in stored-time
+order, independent of snapshot number. It reads `qshear` and `Omega` from each
+run's `athinput*` and applies Athena's residual shear remap before the FFT,
+including the physical shearing-wave correction
+`kx = kx0 + q*Omega*t_remap*ky`.
+
+Each run receives
+`proj2d/theta0/surface_density_statistics.npz`. The archive contains time
+series of area- and mass-weighted PDFs for `log10(Sigma)`,
+`delta = Sigma/<Sigma> - 1`, and `s = ln(Sigma/<Sigma>)`, plus angle-averaged
+power spectra for `delta` and `s`. The suite directory receives
+`surface_density_pdf_summary.png` and
+`surface_density_power_summary.png`, showing temporal medians and shaded
+5--95 percentiles for every late-run box size.
+
+Full-domain spectra are the default. A centered local spectrum can be
+apodized and zero padded, for example:
+
+```bash
+surface-density-stats /tigress/changgoo/nasa_athena/TIGRESS-NCR \
+  --subregion-size 512 --window tukey --tukey-alpha 0.25 --pad-factor 2
+```
+
+`--window hann` is also available. `--pdf-min/--pdf-max`,
+`--delta-min/--delta-max`, `--s-min/--s-max`, `--pdf-bins`, and `--k-bins`
+control the fixed time-series grids. The subregion, window, and padding
+options apply only to the spectra; PDFs remain full-domain.
 
 ## Snapshot archiving
 
