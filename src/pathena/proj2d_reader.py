@@ -54,13 +54,43 @@ _HDR_RE = re.compile(
 
 
 
-def read_proj2d(path):
+def read_proj2d_metadata(path):
+    """Read filename and line-of-sight metadata without loading map arrays."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+
+    with open(path, "rb") as fp:
+        read_vtk_magic(fp, path)
+        meta_ln = read_ascii_line(fp).rstrip()
+
+    match = _HDR_RE.match(meta_ln)
+    if not match:
+        raise ValueError(
+            f"{path}: cannot parse PROJ2D metadata line: {meta_ln!r}"
+        )
+    num_match = re.search(r"\.(\d{4,})\.", os.path.basename(path))
+    return {
+        "path": path,
+        "num": num_match.group(1) if num_match else None,
+        "id": match.group("id"),
+        "time": float(match.group("time")),
+        "theta": float(match.group("theta")),
+        "phi": float(match.group("phi")),
+        "dl_factor": float(match.group("dl_factor")),
+    }
+
+
+def read_proj2d(path, fields=None):
     """Read one proj2d VTK legacy file.
 
     Parameters
     ----------
     path : str
         Path to the .proj2d file.
+    fields : str or iterable of str, optional
+        Read only these projected fields. By default every field is read.
+        Selecting an early field such as ``"nH"`` avoids reading the rest of
+        a large file and is useful when making projection movies.
 
     Returns
     -------
@@ -76,6 +106,11 @@ def read_proj2d(path):
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
+    if isinstance(fields, str):
+        fields = (fields,)
+    wanted = None if fields is None else set(fields)
+    if wanted is not None and not wanted:
+        raise ValueError("fields must contain at least one field name")
 
     with open(path, "rb") as fp:
         header_lines = []
@@ -144,9 +179,23 @@ def read_proj2d(path):
                     f"{path}: expected LOOKUP_TABLE after SCALARS {name}, "
                     f"got {lookup_ln!r}"
                 )
-            arr = read_vtk_scalar_2d(fp, path, name, Nx, Ny)
-            field_names.append(name)
-            fields[name] = arr
+            if wanted is None or name in wanted:
+                arr = read_vtk_scalar_2d(fp, path, name, Nx, Ny)
+                field_names.append(name)
+                fields[name] = arr
+                if wanted is not None and wanted.issubset(fields):
+                    break
+            else:
+                fp.seek(Nx * Ny * 4, os.SEEK_CUR)
+
+        if wanted is not None:
+            missing = wanted.difference(fields)
+            if missing:
+                available = ", ".join(field_names) or "none"
+                raise KeyError(
+                    f"{path}: requested fields not found: "
+                    f"{', '.join(sorted(missing))}; loaded fields: {available}"
+                )
 
         out["field_names"] = field_names
         out["fields"] = fields
@@ -155,10 +204,10 @@ def read_proj2d(path):
     return out
 
 
-def read_proj2d_series(pattern):
+def read_proj2d_series(pattern, fields=None):
     """Read every file matching a glob pattern, sorted by filename."""
     paths = sorted(glob.glob(pattern))
-    return [read_proj2d(p) for p in paths]
+    return [read_proj2d(p, fields=fields) for p in paths]
 
 
 def read_all_proj2ds(basedir, problem_id, verbose=True, index_by="list"):
