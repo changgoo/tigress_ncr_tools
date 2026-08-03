@@ -24,6 +24,7 @@ DENSITY_TITLES = {
     "nHI": "Atomic gas density",
     "nHII": "Ionized gas density",
 }
+SCALAR_TITLES = {**DENSITY_TITLES, "T": "Temperature"}
 PLANE_COORDINATES = {
     "x1": ("x2", "x3"),
     "x2": ("x1", "x3"),
@@ -317,7 +318,7 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
         canvas,
         slc,
         settings,
-        title or DENSITY_TITLES.get(field, style["short"]),
+        title or SCALAR_TITLES.get(field, style["short"]),
     )
 
 

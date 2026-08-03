@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Optional
 
 
+CAMERA_TURN_MIN_FRAMES = 7
+
+
 @dataclass(frozen=True)
 class SourceFrame:
     """One physically ordered simulation output available to the movie."""
@@ -187,9 +190,11 @@ class _StoryBuilder:
     def transition(self, scene, source_index, seconds, view_a, view_b, *,
                    plane_a=None, field_a=None, plane_b=None, field_b=None,
                    particles_a=0.0, particles_b=0.0,
-                   camera_a=0.0, camera_b=0.0):
+                   camera_a=0.0, camera_b=0.0, minimum_frames=2):
         source = self.sources[source_index]
         count = duration_frame_count(seconds, self.fps)
+        if count:
+            count = max(count, minimum_frames)
         for blend in transition_fractions(count):
             self.append(
                 scene,
@@ -320,6 +325,7 @@ def build_slice_storyboard(
             field_b="T",
             camera_a=0.0,
             camera_b=1.0,
+            minimum_frames=CAMERA_TURN_MIN_FRAMES,
         )
         side_view_a = "volume"
         side_plane_a = None

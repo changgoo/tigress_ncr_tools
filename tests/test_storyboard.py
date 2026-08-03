@@ -55,7 +55,7 @@ def test_default_storyboard_sequence_and_frozen_sources():
         durations=short_durations(),
     )
     assert [frame.frame_number for frame in story] == list(range(len(story)))
-    assert len(story) == 26
+    assert len(story) == 31
     assert list(dict.fromkeys(frame.scene for frame in story)) == [
         "top_density_evolution",
         "particle_fade",
@@ -86,7 +86,12 @@ def test_default_storyboard_sequence_and_frozen_sources():
     assert (molecular[0].field_a, molecular[0].field_b) == ("nH", "nH2")
     assert [frame.blend for frame in molecular] == [0.0, 1.0]
     camera = scene_frames(story, "camera_turn")
-    assert [frame.camera_fraction for frame in camera] == [0.0, 1.0]
+    assert len(camera) == 7
+    assert camera[0].camera_fraction == 0.0
+    assert camera[-1].camera_fraction == 1.0
+    assert [frame.camera_fraction for frame in camera] == sorted(
+        frame.camera_fraction for frame in camera
+    )
 
     side = scene_frames(story, "side_temperature_evolution")
     assert [frame.source_index for frame in side] == [1, 2]

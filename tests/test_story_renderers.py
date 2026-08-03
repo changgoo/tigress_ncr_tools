@@ -5,6 +5,7 @@ import pytest
 from tigress_ncr_tools.story_renderers import (
     CanvasSettings,
     DENSITY_TITLES,
+    SCALAR_TITLES,
     blend_rgba,
     field_norm,
     field_style,
@@ -75,6 +76,7 @@ def test_density_fields_share_fixed_style_and_norm():
         "nHI": "Atomic gas density",
         "nHII": "Ionized gas density",
     }
+    assert SCALAR_TITLES["T"] == "Temperature"
     styles[0]["vmin"] = 99.0
     assert field_style("nH")["vmin"] == 1.0e-4
 
