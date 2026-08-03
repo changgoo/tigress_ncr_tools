@@ -1,3 +1,5 @@
+import tarfile
+
 import numpy as np
 import pytest
 
@@ -141,3 +143,37 @@ def test_discover_new_output_directory_orders_rank_zero_first(tmp_path):
     assert [path.name for path in paths] == [
         "R8.0007.vtk", "R8-id1.0007.vtk", "R8-id2.0007.vtk"
     ]
+
+
+def test_discover_and_assemble_archived_snapshot_without_extraction(tmp_path):
+    output = tmp_path / "vtk" / "0008"
+    first = output / "R8.0008.vtk"
+    second = output / "R8-id1.0008.vtk"
+    write_piece(first, (0, 0, 0), piece_fields(0.0))
+    write_piece(second, (2, 0, 0), piece_fields(2.0))
+    archive_path = tmp_path / "vtk" / "R8.0008.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(first, arcname=f"0008/{first.name}")
+        archive.add(second, arcname=f"0008/{second.name}")
+    first.unlink()
+    second.unlink()
+    output.rmdir()
+
+    members = discover_vtk_pieces(tmp_path, "R8", 8)
+    assert [member.name for member in members] == [
+        "R8.0008.vtk", "R8-id1.0008.vtk"
+    ]
+    piece = read_vtk_piece_metadata(members[0])
+    assert "R8.0008.tar::0008/R8.0008.vtk" in piece.path
+    assert np.allclose(
+        read_vtk_piece_field(piece, "density"), piece_fields(0.0)["density"]
+    )
+
+    volume = read_vtk_volume(members, ["density", "velocity"])
+    assert volume["fields"]["density"].shape == (2, 2, 4)
+    assert np.allclose(
+        volume["fields"]["density"][:, :, :2], piece_fields(0.0)["density"]
+    )
+    assert np.allclose(
+        volume["fields"]["density"][:, :, 2:], piece_fields(2.0)["density"]
+    )

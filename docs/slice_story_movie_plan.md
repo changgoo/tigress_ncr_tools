@@ -118,7 +118,7 @@ A new `pathena.vtk3d_reader` module will read the full-volume snapshot. It will:
 - Validate common spacing, non-overlap, and complete domain coverage.
 - Assemble selected fields as `(nz, ny, nx)` arrays, with a final component
   dimension for vector fields.
-- Support live `vtk/NNNN/` directories first and archived snapshots afterward.
+- Support live `vtk/NNNN/` directories and direct reads from archived snapshots.
 - Load only density, pressure, `xH2`, and `xe` for the temperature volume.
 - Report the native-resolution memory estimate before allocation.
 

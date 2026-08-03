@@ -86,7 +86,10 @@ rendering assembles the complete selected 3D fields, then uses render-only
 subsampling: preview defaults to `--volume-stride 4`, production to stride 2,
 and `--volume-stride 1` preserves native resolution. `--volume-max-gib` limits
 the full-array allocation, `--volume-opacity-scale` tunes visibility, and
-`--no-volume` retains the lighter slice-only path.
+`--no-volume` retains the lighter slice-only path. Full-volume inputs may be
+live `vtk/NNNN/` directories or the uncompressed `vtk/PROBLEM.NNNN.tar`
+archives created by `archive-tigress-snapshots`; tar members are read directly
+without extracting a second copy.
 
 ## Surface-density statistics
 

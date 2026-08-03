@@ -2,6 +2,8 @@
 
 import os
 import re
+import tarfile
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,22 @@ class VtkFieldRecord:
 
 
 @dataclass(frozen=True)
+class VtkArchiveMember:
+    """A seekable VTK file stored inside an uncompressed snapshot tar."""
+
+    archive_path: str
+    member_name: str
+    size: int
+
+    @property
+    def name(self):
+        return Path(self.member_name).name
+
+    def __str__(self):
+        return f"{self.archive_path}::{self.member_name}"
+
+
+@dataclass(frozen=True)
 class VtkPiece:
     """Metadata for one rank-local structured-points VTK file."""
 
@@ -47,6 +65,7 @@ class VtkPiece:
     right_edge: tuple
     ncells: int
     fields: dict
+    source: object
 
 
 @dataclass(frozen=True)
@@ -88,24 +107,69 @@ def _consume_binary_tail(stream):
         stream.seek(-1, os.SEEK_CUR)
 
 
-def read_vtk_piece_metadata(path):
+@contextmanager
+def _open_vtk_source(source, archive=None):
+    if isinstance(source, VtkArchiveMember):
+        if archive is None:
+            with tarfile.open(source.archive_path, "r") as opened:
+                stream = opened.extractfile(source.member_name)
+                if stream is None:
+                    raise ValueError(f"cannot read archive member {source}")
+                with stream:
+                    yield stream
+        else:
+            stream = archive.extractfile(source.member_name)
+            if stream is None:
+                raise ValueError(f"cannot read archive member {source}")
+            with stream:
+                yield stream
+    else:
+        with Path(source).open("rb") as stream:
+            yield stream
+
+
+@contextmanager
+def _open_source_archives(sources):
+    archive_paths = sorted({
+        source.archive_path
+        for source in sources
+        if isinstance(source, VtkArchiveMember)
+    })
+    with ExitStack() as stack:
+        archives = {
+            path: stack.enter_context(tarfile.open(path, "r"))
+            for path in archive_paths
+        }
+        yield archives
+
+
+def read_vtk_piece_metadata(path, _archive=None):
     """Read one Athena VTK piece's geometry and field map without payloads."""
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    file_size = path.stat().st_size
-    with path.open("rb") as stream:
-        read_vtk_magic(stream, path)
+    source = path
+    if isinstance(source, VtkArchiveMember):
+        file_size = source.size
+        display_path = str(source)
+    else:
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        file_size = path.stat().st_size
+        display_path = str(path)
+        source = path
+    with _open_vtk_source(source, archive=_archive) as stream:
+        read_vtk_magic(stream, display_path)
         description = read_ascii_line(stream).strip()
         time_match = _TIME_RE.search(description)
         if time_match is None:
-            raise ValueError(f"{path}: cannot parse time from {description!r}")
+            raise ValueError(
+                f"{display_path}: cannot parse time from {description!r}"
+            )
         if read_ascii_line(stream).strip() != "BINARY":
-            raise ValueError(f"{path}: expected BINARY VTK data")
+            raise ValueError(f"{display_path}: expected BINARY VTK data")
         dataset = read_ascii_line(stream).strip()
         if dataset != "DATASET STRUCTURED_POINTS":
             raise ValueError(
-                f"{path}: expected DATASET STRUCTURED_POINTS, got {dataset!r}"
+                f"{display_path}: expected DATASET STRUCTURED_POINTS, got {dataset!r}"
             )
 
         point_dims = None
@@ -115,7 +179,7 @@ def read_vtk_piece_metadata(path):
         while ncells is None:
             line = read_ascii_line(stream)
             if not line:
-                raise ValueError(f"{path}: EOF before CELL_DATA")
+                raise ValueError(f"{display_path}: EOF before CELL_DATA")
             tokens = line.strip().split()
             if not tokens:
                 continue
@@ -128,15 +192,19 @@ def read_vtk_piece_metadata(path):
             elif tokens[0] == "CELL_DATA":
                 ncells = int(tokens[1])
         if point_dims is None or origin is None or spacing is None:
-            raise ValueError(f"{path}: incomplete structured-points geometry")
+            raise ValueError(
+                f"{display_path}: incomplete structured-points geometry"
+            )
         shape_xyz = tuple(max(value - 1, 1) for value in point_dims)
         if int(np.prod(shape_xyz)) != ncells:
             raise ValueError(
-                f"{path}: CELL_DATA {ncells} does not match dimensions "
+                f"{display_path}: CELL_DATA {ncells} does not match dimensions "
                 f"{shape_xyz}"
             )
         if any(value <= 0.0 for value in spacing):
-            raise ValueError(f"{path}: spacing must be positive, got {spacing}")
+            raise ValueError(
+                f"{display_path}: spacing must be positive, got {spacing}"
+            )
 
         fields = {}
         while True:
@@ -148,18 +216,20 @@ def read_vtk_piece_metadata(path):
                 continue
             kind = tokens[0]
             if kind not in ("SCALARS", "VECTORS") or len(tokens) < 3:
-                raise ValueError(f"{path}: malformed field header {line!r}")
+                raise ValueError(
+                    f"{display_path}: malformed field header {line!r}"
+                )
             name, vtk_dtype = tokens[1], tokens[2]
             if vtk_dtype not in _VTK_DTYPES:
                 raise ValueError(
-                    f"{path}: field {name} has unsupported dtype {vtk_dtype!r}"
+                    f"{display_path}: field {name} has unsupported dtype {vtk_dtype!r}"
                 )
             if kind == "SCALARS":
                 ncomp = int(tokens[3]) if len(tokens) > 3 else 1
                 lookup = read_ascii_line(stream).strip()
                 if not lookup.startswith("LOOKUP_TABLE"):
                     raise ValueError(
-                        f"{path}: field {name} is missing LOOKUP_TABLE"
+                        f"{display_path}: field {name} is missing LOOKUP_TABLE"
                     )
             else:
                 ncomp = 3
@@ -168,7 +238,8 @@ def read_vtk_piece_metadata(path):
             nbytes = nvalues * _VTK_DTYPES[vtk_dtype].itemsize
             if data_offset + nbytes > file_size:
                 raise ValueError(
-                    f"{path}: short payload for field {name}; expected {nbytes} bytes"
+                    f"{display_path}: short payload for field {name}; "
+                    f"expected {nbytes} bytes"
                 )
             fields[name] = VtkFieldRecord(
                 name=name,
@@ -186,7 +257,7 @@ def read_vtk_piece_metadata(path):
         for left, count, delta in zip(origin, shape_xyz, spacing)
     )
     return VtkPiece(
-        path=str(path),
+        path=display_path,
         time=float(time_match.group("time")),
         point_dims=point_dims,
         shape_xyz=shape_xyz,
@@ -195,11 +266,13 @@ def read_vtk_piece_metadata(path):
         right_edge=right_edge,
         ncells=ncells,
         fields=fields,
+        source=source,
     )
 
 
 def _piece_rank(path):
-    match = _RANK_RE.search(Path(path).name)
+    name = path.name if isinstance(path, VtkArchiveMember) else Path(path).name
+    match = _RANK_RE.search(name)
     return int(match.group("rank")) if match else 0
 
 
@@ -226,11 +299,27 @@ def discover_vtk_pieces(run_dir, problem_id, num):
                 for path in directory.glob(f"{problem_id}-id*.{number}.vtk")
             )
         return sorted(set(paths), key=lambda path: (_piece_rank(path), str(path)))
-    archive = run_dir / f"{problem_id}.{number}.tar"
-    if archive.exists():
-        raise NotImplementedError(
-            f"archived VTK input is not implemented yet: {archive}"
+    archives = (
+        run_dir / "vtk" / f"{problem_id}.{number}.tar",
+        run_dir / f"{problem_id}.{number}.tar",
+    )
+    archive_path = next((path for path in archives if path.is_file()), None)
+    if archive_path is not None:
+        pattern = re.compile(
+            rf"^(?:.*/)?{re.escape(problem_id)}"
+            rf"(?:-id\d+)?\.{re.escape(number)}\.vtk$"
         )
+        with tarfile.open(archive_path, "r") as archive:
+            members = [
+                VtkArchiveMember(
+                    str(archive_path), member.name, member.size
+                )
+                for member in archive.getmembers()
+                if member.isfile() and pattern.fullmatch(member.name)
+            ]
+        if not members:
+            raise ValueError(f"archive has no matching VTK members: {archive_path}")
+        return sorted(members, key=lambda item: (_piece_rank(item), item.member_name))
     raise FileNotFoundError(
         f"cannot find VTK output {problem_id}.{number} under {run_dir}"
     )
@@ -250,7 +339,19 @@ def inspect_vtk_volume(paths, time_tolerance=0.01):
     """Inspect and validate a set of pieces as a complete uniform volume."""
     if time_tolerance < 0.0:
         raise ValueError("time_tolerance must be non-negative")
-    pieces = [read_vtk_piece_metadata(path) for path in paths]
+    paths = list(paths)
+    with _open_source_archives(paths) as archives:
+        pieces = [
+            read_vtk_piece_metadata(
+                path,
+                _archive=(
+                    archives[path.archive_path]
+                    if isinstance(path, VtkArchiveMember)
+                    else None
+                ),
+            )
+            for path in paths
+        ]
     if not pieces:
         raise ValueError("at least one VTK piece is required")
     reference_spacing = np.asarray(pieces[0].spacing)
@@ -342,14 +443,14 @@ def estimate_volume_bytes(layout, field_names, dtype=np.float32):
     return total
 
 
-def read_vtk_piece_field(piece, name, dtype=np.float32):
+def read_vtk_piece_field(piece, name, dtype=np.float32, _archive=None):
     """Read one cell-centered scalar or vector field from one piece."""
     if name not in piece.fields:
         raise KeyError(f"{piece.path} is missing field {name!r}")
     record = piece.fields[name]
     if name.startswith("face_centered_B"):
         raise ValueError("face-centered fields are not supported for assembly")
-    with open(piece.path, "rb") as stream:
+    with _open_vtk_source(piece.source, archive=_archive) as stream:
         stream.seek(record.data_offset)
         raw = stream.read(record.nbytes)
     if len(raw) != record.nbytes:
@@ -383,14 +484,22 @@ def read_vtk_volume(paths, field_names, *, dtype=np.float32,
         shape = shape_zyx if ncomp == 1 else shape_zyx + (ncomp,)
         arrays[name] = np.empty(shape, dtype=dtype)
 
-    for placement in layout.placements:
-        x0, y0, z0 = placement.start_xyz
-        x1, y1, z1 = placement.stop_xyz
-        target = (slice(z0, z1), slice(y0, y1), slice(x0, x1))
-        for name in field_names:
-            arrays[name][target] = read_vtk_piece_field(
-                placement.piece, name, dtype=dtype
+    sources = [placement.piece.source for placement in layout.placements]
+    with _open_source_archives(sources) as archives:
+        for placement in layout.placements:
+            x0, y0, z0 = placement.start_xyz
+            x1, y1, z1 = placement.stop_xyz
+            target = (slice(z0, z1), slice(y0, y1), slice(x0, x1))
+            source = placement.piece.source
+            archive = (
+                archives[source.archive_path]
+                if isinstance(source, VtkArchiveMember)
+                else None
             )
+            for name in field_names:
+                arrays[name][target] = read_vtk_piece_field(
+                    placement.piece, name, dtype=dtype, _archive=archive
+                )
 
     axes = {}
     for name, left, delta, count in zip(
