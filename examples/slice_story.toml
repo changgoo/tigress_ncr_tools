@@ -1,0 +1,48 @@
+# CLI options override values in this file. RUN_DIR remains positional.
+
+[source]
+problem_id = "R8_8pc_NCR"
+slice_id = "midplane"
+time_tolerance = 0.01
+
+[story]
+fps = 30.0
+start_index = 0
+# freeze_index and stop_index may be omitted to use their automatic values.
+duration_scale = 1.0
+
+[durations]
+top_evolution = 10.0
+particle_fade = 1.0
+species_transition = 1.25
+temperature_transition = 1.5
+volume_reveal = 2.0
+camera_turn = 4.0
+side_reveal = 1.5
+side_evolution = 10.0
+velocity_reveal = 5.0
+magnetic_transition = 5.0
+radiation_transition = 5.0
+
+[canvas]
+width = 1920
+height = 1080
+
+[volume]
+enabled = true
+stride = 2
+max_gib = 8.0
+opacity_scale = 0.08
+
+[render]
+particles = true
+overwrite = false
+
+[output]
+directory = "movie_slice_story"
+
+[movie]
+enabled = true
+codec = "auto"
+crf = 18
+qscale = 2

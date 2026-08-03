@@ -81,6 +81,16 @@ slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \
   --movie --output-dir movie_slice_story
 ```
 
+For repeatable timing and rendering choices, copy
+`examples/slice_story.toml` and run:
+
+```bash
+slice-story-movie /path/to/RUN --config my_slice_story.toml
+```
+
+Command-line options override values from the TOML file. Per-scene durations
+live in its `[durations]` table and are multiplied by `duration_scale`.
+
 `--start-frame`, `--stop-frame`, and the default skip-existing behavior make
 long renders resumable. Use `--overwrite` to replace existing PNGs. Volume
 rendering assembles the complete selected 3D fields, then uses render-only

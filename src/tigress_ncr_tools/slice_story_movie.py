@@ -6,6 +6,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import fields
 from pathlib import Path
 
@@ -49,6 +50,47 @@ FINAL_SIDE_FIELD_GROUPS = (
     ("rad_energy_density_PE",),
     ("rad_energy_density_PH",),
 )
+
+CONFIG_ARGUMENTS = {
+    ("source", "problem_id"): ("problem_id", "--problem-id", str, False),
+    ("source", "slice_id"): ("slice_id", "--slice-id", str, False),
+    ("source", "time_tolerance"): (
+        "time_tolerance", "--time-tolerance", float, False
+    ),
+    ("story", "fps"): ("fps", "--fps", float, False),
+    ("story", "start_index"): ("start_index", "--start-index", int, False),
+    ("story", "freeze_index"): ("freeze_index", "--freeze-index", int, False),
+    ("story", "stop_index"): ("stop_index", "--stop-index", int, False),
+    ("story", "duration_scale"): (
+        "duration_scale", "--duration-scale", float, False
+    ),
+    ("story", "preview"): ("preview", "--preview", bool, False),
+    ("canvas", "width"): ("width", "--width", int, False),
+    ("canvas", "height"): ("height", "--height", int, False),
+    ("volume", "enabled"): ("no_volume", "--no-volume", bool, True),
+    ("volume", "stride"): ("volume_stride", "--volume-stride", int, False),
+    ("volume", "max_gib"): (
+        "volume_max_gib", "--volume-max-gib", float, False
+    ),
+    ("volume", "opacity_scale"): (
+        "volume_opacity_scale", "--volume-opacity-scale", float, False
+    ),
+    ("render", "particles"): (
+        "no_particles", "--no-particles", bool, True
+    ),
+    ("render", "start_frame"): (
+        "start_frame", "--start-frame", int, False
+    ),
+    ("render", "stop_frame"): ("stop_frame", "--stop-frame", int, False),
+    ("render", "overwrite"): ("overwrite", "--overwrite", bool, False),
+    ("output", "directory"): ("output_dir", "--output-dir", Path, False),
+    ("movie", "enabled"): ("movie", "--movie", bool, False),
+    ("movie", "path"): ("movie_path", "--movie-path", Path, False),
+    ("movie", "codec"): ("codec", "--codec", str, False),
+    ("movie", "crf"): ("crf", "--crf", int, False),
+    ("movie", "qscale"): ("qscale", "--qscale", int, False),
+    ("movie", "bitrate"): ("bitrate", "--bitrate", str, False),
+}
 
 
 def slice_series_pattern(run_dir, problem_id, slice_id):
@@ -204,6 +246,93 @@ def scaled_durations(scale):
     return StoryDurations(**{
         item.name: getattr(defaults, item.name) * scale
         for item in fields(defaults)
+    })
+
+
+def _load_toml(path):
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError as error:
+            raise RuntimeError(
+                "TOML configuration on Python < 3.11 requires tomli"
+            ) from error
+    with Path(path).expanduser().open("rb") as stream:
+        return tomllib.load(stream)
+
+
+def _config_value(value, expected, label):
+    if expected is bool:
+        if not isinstance(value, bool):
+            raise ValueError(f"config {label} must be a boolean")
+        return value
+    if expected is int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"config {label} must be an integer")
+        return value
+    if expected is float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"config {label} must be a number")
+        return float(value)
+    if expected is str:
+        if not isinstance(value, str):
+            raise ValueError(f"config {label} must be a string")
+        return value
+    if expected is Path:
+        if not isinstance(value, str):
+            raise ValueError(f"config {label} must be a path string")
+        return Path(value).expanduser()
+    raise TypeError(f"unknown config value type for {label}")
+
+
+def apply_movie_config(args, config, argv):
+    """Merge validated TOML settings unless their CLI option was explicit."""
+    if not isinstance(config, dict):
+        raise ValueError("movie config must contain TOML tables")
+    explicit = {
+        token.split("=", 1)[0]
+        for token in argv
+        if isinstance(token, str) and token.startswith("--")
+    }
+    duration_names = {item.name for item in fields(StoryDurations)}
+    allowed = set(CONFIG_ARGUMENTS)
+    allowed.update(("durations", name) for name in duration_names)
+    for section, values in config.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"config [{section}] must be a TOML table")
+        for key in values:
+            if (section, key) not in allowed:
+                raise ValueError(f"unknown config key {section}.{key}")
+
+    for (section, key), (destination, option, expected, invert) in (
+        CONFIG_ARGUMENTS.items()
+    ):
+        if section not in config or key not in config[section] or option in explicit:
+            continue
+        value = _config_value(
+            config[section][key], expected, f"{section}.{key}"
+        )
+        setattr(args, destination, not value if invert else value)
+
+    duration_values = config.get("durations", {})
+    overrides = {
+        name: _config_value(value, float, f"durations.{name}")
+        for name, value in duration_values.items()
+    }
+    if any(value < 0.0 for value in overrides.values()):
+        raise ValueError("configured durations must be non-negative")
+    return overrides
+
+
+def configured_durations(scale, overrides=None):
+    """Apply per-scene base durations and then the global duration scale."""
+    base = StoryDurations()
+    values = {item.name: getattr(base, item.name) for item in fields(base)}
+    values.update(overrides or {})
+    return StoryDurations(**{
+        name: value * scale for name, value in values.items()
     })
 
 
@@ -460,7 +589,8 @@ def encode_story_movie(
 def _parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path)
-    parser.add_argument("--problem-id", required=True)
+    parser.add_argument("--problem-id")
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--slice-id", default="midplane")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--time-tolerance", type=float, default=0.01)
@@ -492,7 +622,18 @@ def _parser():
 
 def main(argv=None):
     parser = _parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(raw_argv)
+    duration_overrides = {}
+    if args.config is not None:
+        try:
+            duration_overrides = apply_movie_config(
+                args, _load_toml(args.config), raw_argv
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            parser.error(str(error))
+    if not args.problem_id:
+        parser.error("--problem-id is required (directly or in [source])")
     if args.time_tolerance < 0.0:
         parser.error("--time-tolerance must be non-negative")
     records = discover_slice_story_records(
@@ -554,7 +695,7 @@ def main(argv=None):
     if volume_stride < 1:
         parser.error("--volume-stride must be a positive integer")
     try:
-        durations = scaled_durations(duration_scale)
+        durations = configured_durations(duration_scale, duration_overrides)
         requests = build_slice_storyboard(
             records,
             fps=fps,
@@ -584,6 +725,10 @@ def main(argv=None):
             "problem_id": args.problem_id,
             "slice_id": args.slice_id,
             "time_tolerance": args.time_tolerance,
+            "config_path": (
+                str(args.config.expanduser().resolve())
+                if args.config is not None else None
+            ),
         },
         "story": {
             "fps": fps,

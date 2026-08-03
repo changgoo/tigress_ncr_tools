@@ -122,6 +122,33 @@ def test_resolved_config_is_atomic_valid_toml(tmp_path):
     assert not path.with_name(path.name + ".tmp").exists()
 
 
+def test_toml_config_merges_with_cli_precedence_and_duration_overrides():
+    argv = ["/run", "--fps", "12", "--no-volume"]
+    args = movie._parser().parse_args(argv)
+    overrides = movie.apply_movie_config(args, {
+        "source": {"problem_id": "R8", "slice_id": "midplane"},
+        "story": {"fps": 24.0, "duration_scale": 0.5},
+        "volume": {"enabled": True, "stride": 3},
+        "render": {"particles": False},
+        "durations": {"camera_turn": 8.0},
+    }, argv)
+    assert args.problem_id == "R8"
+    assert args.fps == 12.0
+    assert args.no_volume
+    assert args.volume_stride == 3
+    assert args.no_particles
+    durations = movie.configured_durations(args.duration_scale, overrides)
+    assert durations.camera_turn == 4.0
+    assert durations.top_evolution == 5.0
+
+    with pytest.raises(ValueError, match="unknown config key"):
+        movie.apply_movie_config(args, {"story": {"typo": 2}}, argv)
+    with pytest.raises(ValueError, match="must be a boolean"):
+        movie.apply_movie_config(
+            args, {"volume": {"enabled": "yes"}}, ["/run"]
+        )
+
+
 def test_render_story_frames_blends_caches_and_resumes(tmp_path, monkeypatch):
     calls = {"read": 0, "derive": 0, "render": []}
 
