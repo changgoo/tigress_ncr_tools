@@ -10,6 +10,7 @@ fps = 30.0
 start_index = 0
 # freeze_index and stop_index may be omitted to use their automatic values.
 duration_scale = 1.0
+# every_slice defaults to true for production and false with --preview.
 
 [durations]
 top_evolution = 10.0

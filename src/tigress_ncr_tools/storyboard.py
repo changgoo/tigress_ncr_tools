@@ -166,11 +166,15 @@ class _StoryBuilder:
         ))
 
     def evolution(self, scene, start_index, stop_index, seconds, *,
-                  plane, field, particles=False):
-        count = duration_frame_count(seconds, self.fps)
-        for source_index in _nearest_source_indices(
-            self.sources, start_index, stop_index, count
-        ):
+                  plane, field, particles=False, every_source=False):
+        if every_source:
+            source_indices = range(start_index, stop_index + 1)
+        else:
+            count = duration_frame_count(seconds, self.fps)
+            source_indices = _nearest_source_indices(
+                self.sources, start_index, stop_index, count
+            )
+        for source_index in source_indices:
             self.append(
                 scene,
                 self.sources[source_index],
@@ -213,6 +217,7 @@ def build_slice_storyboard(
     stop_index=None,
     durations=None,
     include_volume=True,
+    evolution_every_source=False,
 ):
     """Expand indexed slice records into the default movie frame requests.
 
@@ -247,6 +252,7 @@ def build_slice_storyboard(
         plane="x3",
         field="nH",
         particles=True,
+        every_source=evolution_every_source,
     )
     story.transition(
         "particle_fade",
@@ -341,6 +347,7 @@ def build_slice_storyboard(
         durations.side_evolution,
         plane="x2",
         field="T",
+        every_source=evolution_every_source,
     )
     story.transition(
         "velocity_streamlines",

@@ -122,6 +122,21 @@ def test_storyboard_can_skip_volume_and_samples_physical_time():
     assert reveal[0].plane_a == "x3"
 
 
+def test_storyboard_can_use_every_source_for_evolution_scenes():
+    story = build_slice_storyboard(
+        records((0.0, 1.0, 2.0, 3.0, 4.0)),
+        fps=4,
+        freeze_index=2,
+        durations=short_durations(),
+        include_volume=False,
+        evolution_every_source=True,
+    )
+    top = scene_frames(story, "top_density_evolution")
+    side = scene_frames(story, "side_temperature_evolution")
+    assert [frame.source_index for frame in top] == [0, 1, 2]
+    assert [frame.source_index for frame in side] == [2, 3, 4]
+
+
 def test_storyboard_validation_and_atomic_manifest(tmp_path):
     with pytest.raises(ValueError, match="sorted"):
         build_slice_storyboard(records((1.0, 0.0)))

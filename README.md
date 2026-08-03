@@ -90,6 +90,9 @@ slice-story-movie /path/to/RUN --config my_slice_story.toml
 
 Command-line options override values from the TOML file. Per-scene durations
 live in its `[durations]` table and are multiplied by `duration_scale`.
+Production rendering uses every source slice once in each evolution segment;
+previews sample the series to meet their shortened timing. Use
+`--sample-slices` or `--every-slice` to override that behavior explicitly.
 
 `--start-frame`, `--stop-frame`, and the default skip-existing behavior make
 long renders resumable. Use `--overwrite` to replace existing PNGs. Volume

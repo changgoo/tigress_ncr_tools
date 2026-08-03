@@ -148,6 +148,15 @@ def test_toml_config_merges_with_cli_precedence_and_duration_overrides():
             args, {"volume": {"enabled": "yes"}}, ["/run"]
         )
 
+    sampled_argv = ["/run", "--sample-slices"]
+    sampled_args = movie._parser().parse_args(sampled_argv)
+    movie.apply_movie_config(
+        sampled_args,
+        {"story": {"every_slice": True}},
+        sampled_argv,
+    )
+    assert sampled_args.every_slice is False
+
 
 def test_render_story_frames_blends_caches_and_resumes(tmp_path, monkeypatch):
     calls = {"read": 0, "derive": 0, "render": []}

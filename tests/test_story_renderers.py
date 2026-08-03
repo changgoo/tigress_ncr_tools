@@ -4,6 +4,7 @@ import pytest
 
 from tigress_ncr_tools.story_renderers import (
     CanvasSettings,
+    DENSITY_TITLES,
     blend_rgba,
     field_norm,
     field_style,
@@ -66,8 +67,14 @@ def test_density_fields_share_fixed_style_and_norm():
     density_fields = ("nH", "nH2", "nHI", "nHII")
     styles = [field_style(field) for field in density_fields]
     norms = [field_norm(field) for field in density_fields]
-    assert {style["cmap"] for style in styles} == {"Spectral_r"}
+    assert {style["cmap"] for style in styles} == {"cmr.rainforest"}
     assert {(norm.vmin, norm.vmax) for norm in norms} == {(1.0e-4, 1.0e4)}
+    assert DENSITY_TITLES == {
+        "nH": "Total gas density",
+        "nH2": "Molecular gas density",
+        "nHI": "Atomic gas density",
+        "nHII": "Ionized gas density",
+    }
     styles[0]["vmin"] = 99.0
     assert field_style("nH")["vmin"] == 1.0e-4
 
@@ -157,6 +164,12 @@ def test_radiation_screen_composite_preserves_two_channels():
     assert np.all(combined[..., :3] >= lyc[..., :3])
     with pytest.raises(ValueError, match="matching"):
         radiation_composite_rgba(low, high[:, :2])
+    assert (field_norm("Erad_PE").vmin, field_norm("Erad_PE").vmax) == (
+        1.0e-14, 1.0e-13
+    )
+    assert (field_norm("Erad_PH").vmin, field_norm("Erad_PH").vmax) == (
+        1.0e-18, 1.0e-13
+    )
 
 
 def test_atomic_png_write_and_overwrite(tmp_path):

@@ -70,6 +70,9 @@ CONFIG_ARGUMENTS = {
         "duration_scale", "--duration-scale", float, False
     ),
     ("story", "preview"): ("preview", "--preview", bool, False),
+    ("story", "every_slice"): (
+        "every_slice", ("--every-slice", "--sample-slices"), bool, False
+    ),
     ("canvas", "width"): ("width", "--width", int, False),
     ("canvas", "height"): ("height", "--height", int, False),
     ("volume", "enabled"): ("no_volume", "--no-volume", bool, True),
@@ -325,7 +328,12 @@ def apply_movie_config(args, config, argv):
     for (section, key), (destination, option, expected, invert) in (
         CONFIG_ARGUMENTS.items()
     ):
-        if section not in config or key not in config[section] or option in explicit:
+        option_names = (option,) if isinstance(option, str) else option
+        if (
+            section not in config
+            or key not in config[section]
+            or any(name in explicit for name in option_names)
+        ):
             continue
         value = _config_value(
             config[section][key], expected, f"{section}.{key}"
@@ -617,6 +625,10 @@ def _parser():
     parser.add_argument("--stop-frame", type=int)
     parser.add_argument("--duration-scale", type=float)
     parser.add_argument("--preview", action="store_true")
+    sampling = parser.add_mutually_exclusive_group()
+    sampling.add_argument("--every-slice", dest="every_slice", action="store_true")
+    sampling.add_argument("--sample-slices", dest="every_slice", action="store_false")
+    parser.set_defaults(every_slice=None)
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--no-volume", action="store_true")
     parser.add_argument("--volume-stride", type=int)
@@ -714,6 +726,9 @@ def main(argv=None):
     )
     if volume_stride < 1:
         parser.error("--volume-stride must be a positive integer")
+    every_slice = (
+        not args.preview if args.every_slice is None else args.every_slice
+    )
     try:
         durations = configured_durations(duration_scale, duration_overrides)
         requests = build_slice_storyboard(
@@ -724,6 +739,7 @@ def main(argv=None):
             stop_index=args.stop_index,
             durations=durations,
             include_volume=not args.no_volume,
+            evolution_every_source=every_slice,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -757,6 +773,7 @@ def main(argv=None):
             "freeze_index": resolved_freeze_index,
             "stop_index": resolved_stop_index,
             "duration_scale": duration_scale,
+            "every_slice": every_slice,
         },
         "durations_seconds": {
             item.name: getattr(durations, item.name)

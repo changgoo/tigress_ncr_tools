@@ -3,6 +3,7 @@
 import glob
 import os
 import re
+import cmasher  # noqa: F401  Registers the ``cmr.*`` Matplotlib colormaps.
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,16 +20,16 @@ FIELD_META = {
     "N_nH2": dict(short=r"$N_{\rm H_2}$", label=r"$N_{\rm H_2}\;[\rm cm^{-2}]$", cmap="pink_r", vmin=1e18, vmax=1e23, log=True),
     "N_nHI": dict(short=r"$N_{\rm H\,I}$", label=r"$N_{\rm H\,I}\;[\rm cm^{-2}]$", cmap="pink_r", vmin=1e18, vmax=1e23, log=True),
     "N_nHII": dict(short=r"$N_{\rm H\,II}$", label=r"$N_{\rm H\,II}\;[\rm cm^{-2}]$", cmap="pink_r", vmin=1e18, vmax=1e23, log=True),
-    "nH": dict(short=r"$n_{\rm H}$", label=r"$n_{\rm H}\;[\rm cm^{-3}]$", cmap="Spectral_r", vmin=1e-4, vmax=1e4, log=True),
-    "nH2": dict(short=r"$n_{\rm H_2}$", label=r"$n_{\rm H_2}\;[\rm cm^{-3}]$", cmap="Spectral_r", vmin=1e-4, vmax=1e4, log=True),
-    "nHI": dict(short=r"$n_{\rm H\,I}$", label=r"$n_{\rm H\,I}\;[\rm cm^{-3}]$", cmap="Spectral_r", vmin=1e-4, vmax=1e4, log=True),
-    "nHII": dict(short=r"$n_{\rm H\,II}$", label=r"$n_{\rm H\,II}\;[\rm cm^{-3}]$", cmap="Spectral_r", vmin=1e-4, vmax=1e4, log=True),
+    "nH": dict(short=r"$n_{\rm H}$", label=r"$n_{\rm H}\;[\rm cm^{-3}]$", cmap="cmr.rainforest", vmin=1e-4, vmax=1e4, log=True),
+    "nH2": dict(short=r"$n_{\rm H_2}$", label=r"$n_{\rm H_2}\;[\rm cm^{-3}]$", cmap="cmr.rainforest", vmin=1e-4, vmax=1e4, log=True),
+    "nHI": dict(short=r"$n_{\rm H\,I}$", label=r"$n_{\rm H\,I}\;[\rm cm^{-3}]$", cmap="cmr.rainforest", vmin=1e-4, vmax=1e4, log=True),
+    "nHII": dict(short=r"$n_{\rm H\,II}$", label=r"$n_{\rm H\,II}\;[\rm cm^{-3}]$", cmap="cmr.rainforest", vmin=1e-4, vmax=1e4, log=True),
     "T": dict(short=r"$T$", label=r"$T\;[\rm K]$", cmap="RdYlBu_r", vmin=1e1, vmax=1e7, log=True),
     "P": dict(short=r"$P/k_{\rm B}$", label=r"$P/k_{\rm B}\;[\rm K\,cm^{-3}]$", cmap="inferno", vmin=1e2, vmax=1e7, log=True),
     "vz": dict(short=r"$v_z$", label=r"$v_z\;[\rm km\,s^{-1}]$", cmap="RdBu_r", vmin=-100.0, vmax=100.0, log=False),
     "Bmag": dict(short=r"$|\mathbf{B}|$", label=r"$|\mathbf{B}|\;[\mu\rm G]$", cmap="cividis", vmin=1e-1, vmax=1e2, log=True),
-    "Erad_PE": dict(short=r"$\mathcal{E}_{\rm PE}$", label=r"$\mathcal{E}_{\rm PE}\;[\rm erg\,cm^{-3}]$", cmap="viridis", vmin=1e-15, vmax=1e-10, log=True),
-    "Erad_PH": dict(short=r"$\mathcal{E}_{\rm PH}$", label=r"$\mathcal{E}_{\rm PH}\;[\rm erg\,cm^{-3}]$", cmap="viridis", vmin=1e-15, vmax=1e-10, log=True),
+    "Erad_PE": dict(short=r"$\mathcal{E}_{\rm PE}$", label=r"$\mathcal{E}_{\rm PE}\;[\rm erg\,cm^{-3}]$", cmap="viridis", vmin=1e-14, vmax=1e-13, log=True),
+    "Erad_PH": dict(short=r"$\mathcal{E}_{\rm PH}$", label=r"$\mathcal{E}_{\rm PH}\;[\rm erg\,cm^{-3}]$", cmap="viridis", vmin=1e-18, vmax=1e-13, log=True),
 }
 
 

@@ -9,6 +9,7 @@ description = "Lightweight readers and command-line tools for TIGRESS-NCR output
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+  "cmasher",
   "matplotlib",
   "numpy",
   "pandas",

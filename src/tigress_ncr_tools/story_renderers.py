@@ -18,6 +18,12 @@ from pathena.units import DEFAULT_MUH, star_particle_units
 
 
 DENSITY_FIELDS = ("nH", "nH2", "nHI", "nHII")
+DENSITY_TITLES = {
+    "nH": "Total gas density",
+    "nH2": "Molecular gas density",
+    "nHI": "Atomic gas density",
+    "nHII": "Ionized gas density",
+}
 PLANE_COORDINATES = {
     "x1": ("x2", "x3"),
     "x2": ("x1", "x3"),
@@ -307,7 +313,11 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
     _decorate_coordinates(axis, plane_data)
     _add_colorbar(figure, image, style)
     return _finish_canvas(
-        figure, canvas, slc, settings, title or style["short"]
+        figure,
+        canvas,
+        slc,
+        settings,
+        title or DENSITY_TITLES.get(field, style["short"]),
     )
 
 
