@@ -26,6 +26,7 @@ from .vtk_helper import (
     read_ascii_line,
     read_vtk_field_array,
     read_vtk_magic,
+    skip_vtk_field_array,
 )
 
 _HDR_RE = re.compile(
@@ -34,8 +35,37 @@ _HDR_RE = re.compile(
     r"out=(?P<out>\S+)"
 )
 _PLANE_RE = re.compile(r"^(x[123])_(.+)$")
+_NUM_RE = re.compile(r"\.(?P<num>\d+)\.")
 
 _META_NAMES = {"dims", "origin", "spacing", "slice_coord"}
+
+
+def _read_slicevtk_header(fp, path):
+    """Read and validate a slicevtk header through the FIELD declaration."""
+    header_lines = []
+    line = read_vtk_magic(fp, path)
+    header_lines.append(line.rstrip())
+
+    meta_line = read_ascii_line(fp).rstrip()
+    header_lines.append(meta_line)
+    match = _HDR_RE.match(meta_line)
+    if not match:
+        raise ValueError(
+            f"{path}: cannot parse SLICEVTK metadata line {meta_line!r}"
+        )
+
+    binary_line = read_ascii_line(fp).strip()
+    dataset_line = read_ascii_line(fp).strip()
+    field_line = read_ascii_line(fp).strip()
+    header_lines.extend([binary_line, dataset_line, field_line])
+    if binary_line != "BINARY":
+        raise ValueError(f"{path}: expected BINARY, got {binary_line!r}")
+    if dataset_line != "DATASET FIELD":
+        raise ValueError(f"{path}: expected DATASET FIELD, got {dataset_line!r}")
+    field_tokens = field_line.split()
+    if len(field_tokens) != 3 or field_tokens[0] != "FIELD":
+        raise ValueError(f"{path}: malformed FIELD header {field_line!r}")
+    return header_lines, match, int(field_tokens[2])
 
 def _plane_axes(plane):
     if plane == "x1":
@@ -124,35 +154,15 @@ def read_slicevtk(path):
         raise FileNotFoundError(path)
 
     with open(path, "rb") as fp:
-        header_lines = []
-        line = read_vtk_magic(fp, path)
-        header_lines.append(line.rstrip())
-
-        meta_line = read_ascii_line(fp).rstrip()
-        header_lines.append(meta_line)
-        m = _HDR_RE.match(meta_line)
-        if not m:
-            raise ValueError(f"{path}: cannot parse SLICEVTK metadata line {meta_line!r}")
-
-        binary_line = read_ascii_line(fp).strip()
-        dataset_line = read_ascii_line(fp).strip()
-        field_line = read_ascii_line(fp).strip()
-        header_lines.extend([binary_line, dataset_line, field_line])
-        if binary_line != "BINARY":
-            raise ValueError(f"{path}: expected BINARY, got {binary_line!r}")
-        if dataset_line != "DATASET FIELD":
-            raise ValueError(f"{path}: expected DATASET FIELD, got {dataset_line!r}")
-        ftok = field_line.split()
-        if len(ftok) != 3 or ftok[0] != "FIELD":
-            raise ValueError(f"{path}: malformed FIELD header {field_line!r}")
-        narrays = int(ftok[2])
+        header_lines, match, narrays = _read_slicevtk_header(fp, path)
 
         raw_planes = {}
         arrays = {}
         out = {
-            "id": m.group("id"),
-            "time": float(m.group("time")),
-            "out": m.group("out"),
+            "path": str(path),
+            "id": match.group("id"),
+            "time": float(match.group("time")),
+            "out": match.group("out"),
             "header_lines": header_lines,
             "arrays": arrays,
         }
@@ -184,6 +194,77 @@ def read_slicevtk(path):
         out["planes"] = _finalize_planes(raw_planes)
         out["plane_names"] = sorted(out["planes"], key=lambda p: int(p[1]))
     return out
+
+
+def read_slicevtk_metadata(path):
+    """Read slicevtk identity, time, planes, and field names without arrays."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+
+    plane_fields = {}
+    arrays = []
+    with open(path, "rb") as fp:
+        _header_lines, match, narrays = _read_slicevtk_header(fp, path)
+        for _ in range(narrays):
+            record = skip_vtk_field_array(fp, path)
+            if record is None:
+                raise ValueError(f"{path}: EOF before reading all FIELD arrays")
+            name, ncomp, ntuple, dtype_name = record
+            arrays.append({
+                "name": name,
+                "ncomp": ncomp,
+                "ntuple": ntuple,
+                "dtype": dtype_name,
+            })
+            plane_match = _PLANE_RE.match(name)
+            if plane_match is None:
+                continue
+            plane, suffix = plane_match.groups()
+            if suffix not in _META_NAMES:
+                plane_fields.setdefault(plane, []).append(suffix)
+
+    number_match = _NUM_RE.search(os.path.basename(path))
+    stat = os.stat(path)
+    return {
+        "path": str(path),
+        "num": number_match.group("num") if number_match else None,
+        "id": match.group("id"),
+        "time": float(match.group("time")),
+        "out": match.group("out"),
+        "plane_names": sorted(plane_fields, key=lambda item: int(item[1])),
+        "field_names": plane_fields,
+        "arrays": arrays,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def index_slicevtk_series(pattern, time_tolerance=0.01):
+    """Index, physically sort, and restart-deduplicate a slicevtk series."""
+    if time_tolerance < 0.0:
+        raise ValueError("time_tolerance must be non-negative")
+    records = sorted(
+        (read_slicevtk_metadata(path) for path in glob.glob(str(pattern))),
+        key=lambda record: (record["time"], record["path"]),
+    )
+    if not records:
+        return []
+
+    deduplicated = []
+    group = []
+    for record in records:
+        if group and record["time"] - group[0]["time"] > time_tolerance:
+            deduplicated.append(max(
+                group,
+                key=lambda item: (item["mtime_ns"], item["path"]),
+            ))
+            group = []
+        group.append(record)
+    if group:
+        deduplicated.append(max(
+            group,
+            key=lambda item: (item["mtime_ns"], item["path"]),
+        ))
+    return sorted(deduplicated, key=lambda record: record["time"])
 
 
 def read_slicevtk_series(pattern):

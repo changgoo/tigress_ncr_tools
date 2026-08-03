@@ -1,5 +1,7 @@
 """Small shared helpers for binary VTK legacy reader modules."""
 
+import os
+
 import numpy as np
 
 _VTK_DTYPE_MAP = {
@@ -76,13 +78,7 @@ def read_vtk_scalar_2d(fp, path, name, nx, ny):
     return np.frombuffer(raw, dtype=">f4").reshape(ny, nx).astype(np.float64)
 
 
-def read_vtk_field_array(fp, path):
-    """Read one VTK legacy FIELD array record.
-
-    Returns ``None`` at EOF. Otherwise returns
-    ``(name, ncomp, ntuple, dtype_name, array)``. Scalar arrays are returned as
-    shape ``(ntuple,)`` and multi-component arrays as ``(ntuple, ncomp)``.
-    """
+def _read_vtk_field_header(fp, path):
     while True:
         line = read_ascii_line(fp)
         if not line:
@@ -102,16 +98,49 @@ def read_vtk_field_array(fp, path):
     dtype = np.dtype(_VTK_DTYPE_MAP[dtype_name])
     nvals = ncomp * ntuple
     nbytes = nvals * dtype.itemsize
+    return name, ncomp, ntuple, dtype_name, dtype, nvals, nbytes
+
+
+def _consume_binary_tail(fp):
+    tail = fp.read(1)
+    if tail not in (b"", b"\n"):
+        fp.seek(-1, os.SEEK_CUR)
+
+
+def read_vtk_field_array(fp, path):
+    """Read one VTK legacy FIELD array record.
+
+    Returns ``None`` at EOF. Otherwise returns
+    ``(name, ncomp, ntuple, dtype_name, array)``. Scalar arrays are returned as
+    shape ``(ntuple,)`` and multi-component arrays as ``(ntuple, ncomp)``.
+    """
+    header = _read_vtk_field_header(fp, path)
+    if header is None:
+        return None
+    name, ncomp, ntuple, dtype_name, dtype, nvals, nbytes = header
     raw = fp.read(nbytes)
     if len(raw) != nbytes:
         raise ValueError(
             f"{path}: short read for FIELD array {name}: got {len(raw)} bytes, expected {nbytes}"
         )
     arr = np.frombuffer(raw, dtype=dtype, count=nvals)
-    tail = fp.read(1)
-    if tail not in (b"", b"\n"):
-        fp.seek(-1, os.SEEK_CUR)
+    _consume_binary_tail(fp)
     arr = arr.astype(np.float64 if dtype.kind == "f" else np.int64, copy=False)
     if ncomp > 1:
         arr = arr.reshape(ntuple, ncomp)
     return name, ncomp, ntuple, dtype_name, arr
+
+
+def skip_vtk_field_array(fp, path):
+    """Skip one FIELD array and return its name, shape, and VTK dtype.
+
+    This is used for fast metadata inventories where reading and converting
+    large slice arrays would waste memory and I/O bandwidth.
+    """
+    header = _read_vtk_field_header(fp, path)
+    if header is None:
+        return None
+    name, ncomp, ntuple, dtype_name, _dtype, _nvals, nbytes = header
+    fp.seek(nbytes, os.SEEK_CUR)
+    _consume_binary_tail(fp)
+    return name, ncomp, ntuple, dtype_name

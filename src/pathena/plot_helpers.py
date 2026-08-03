@@ -3,16 +3,15 @@
 import glob
 import os
 import re
-import warnings
-
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm, Normalize
 
 from .pdf2d_reader import read_pdf2d
+from .slice_fields import derive_plane_fields
 from .slicevtk_reader import read_slicevtk
-from .units import DEFAULT_MUH, PC_CGS, tigress_units
+from .units import DEFAULT_MUH, PC_CGS
 
 
 FIELD_META = {
@@ -159,76 +158,8 @@ def _frame_path(basedir, problem_id, num, out_id, kind):
     raise FileNotFoundError(" or ".join(candidates))
 
 
-LEGACY_SPECIFIC_SCALAR_ALIASES = {
-    # Current R8/TIGRESS-NCR config: NSCALARS=5, HI/H2/EL species enabled.
-    "xHI": "specific_scalar_2",
-    "xH2": "specific_scalar_3",
-    "xe": "specific_scalar_4",
-}
-
-
-def _require_field(fields, name, plane):
-    if name in fields:
-        return fields[name]
-    legacy = LEGACY_SPECIFIC_SCALAR_ALIASES.get(name)
-    if legacy in fields:
-        return fields[legacy]
-    available = ", ".join(sorted(fields))
-    raise KeyError(f"plane {plane} is missing field {name!r}; available: {available}")
-
-
-def _optional_field(fields, name, plane, template):
-    if name in fields:
-        return fields[name]
-
-    warnings.warn(
-        f"plane {plane} is missing field {name!r}; plotting this panel as blank",
-        RuntimeWarning,
-        stacklevel=2,
-    )
-    return np.full_like(template, np.nan, dtype=float)
-
-
-def _component(fields, vector_name, component, plane):
-    vec = _require_field(fields, vector_name, plane)
-    if vec.ndim != 3 or vec.shape[-1] <= component:
-        raise ValueError(f"plane {plane} field {vector_name!r} is not a 3-component vector")
-    return vec[..., component]
-
-
 def _slice_fields(slc, plane, muH=DEFAULT_MUH):
-    p = slc["planes"][plane]
-    fields = p["fields"]
-    u = tigress_units(muH)
-
-    nH = _require_field(fields, "density", plane)
-    xH2 = _require_field(fields, "xH2", plane)
-    xHI = _require_field(fields, "xHI", plane)
-    xe = fields.get("xe", np.zeros_like(nH))
-    pressure = _require_field(fields, "pressure", plane)
-    denom = nH * (1.1 + xe - xH2)
-
-    out = {
-        "nH": nH,
-        "nH2": nH * xH2,
-        "nHI": nH * xHI,
-        "P": pressure * u["pressure_over_kB"],
-        "vz": _component(fields, "velocity", 2, plane),
-        "Erad_PE": _optional_field(fields, "rad_energy_density_PE", plane, nH) * u["energy_density"],
-        "Erad_PH": _optional_field(fields, "rad_energy_density_PH", plane, nH) * u["energy_density"],
-    }
-    out["nHII"] = out["nH"] - out["nHI"] - 2.0 * out["nH2"]
-    out["T"] = np.divide(
-        pressure * u["temperature_per_p_over_rho"],
-        denom,
-        out=np.full_like(pressure, np.nan, dtype=float),
-        where=denom != 0.0,
-    )
-    if "cell_centered_B" in fields:
-        B = fields["cell_centered_B"]
-        if B.ndim == 3 and B.shape[-1] >= 3:
-            out["Bmag"] = np.sqrt(np.sum(B[..., :3]**2, axis=-1)) * u["magnetic_field_microgauss"]
-    return out
+    return derive_plane_fields(slc, plane, muH=muH)
 
 
 def _projection_fields(pdf):
