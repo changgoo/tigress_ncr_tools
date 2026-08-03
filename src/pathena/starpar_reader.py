@@ -245,7 +245,7 @@ def match_starpar_time(records, target_time, time_tolerance=None):
         differences = np.diff(np.unique(times))
         positive = differences[differences > 0.0]
         time_tolerance = (
-            0.5 * float(np.median(positive)) + 1.0e-6
+            0.51 * float(np.median(positive)) + 1.0e-6
             if positive.size else 0.01
         )
     if time_tolerance < 0.0:
