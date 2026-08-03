@@ -12,7 +12,11 @@ from pathlib import Path
 
 from pathena.slice_fields import derive_plane_fields
 from pathena.slicevtk_reader import index_slicevtk_series, read_slicevtk
-from pathena.starpar_reader import read_starpar
+from pathena.starpar_reader import (
+    index_starpar_series,
+    match_starpar_time,
+    read_starpar,
+)
 from pathena.vtk3d_reader import (
     estimate_volume_bytes,
     index_vtk_volume_series,
@@ -78,6 +82,9 @@ CONFIG_ARGUMENTS = {
     ),
     ("render", "particles"): (
         "no_particles", "--no-particles", bool, True
+    ),
+    ("render", "particle_time_tolerance"): (
+        "particle_time_tolerance", "--particle-time-tolerance", float, False
     ),
     ("render", "start_frame"): (
         "start_frame", "--start-frame", int, False
@@ -345,18 +352,6 @@ def configured_durations(scale, overrides=None):
     })
 
 
-def _particle_frame(run_dir, problem_id, num):
-    if num is None:
-        return None
-    candidates = (
-        Path(run_dir) / "starpar" / f"{problem_id}.{num}.starpar.vtk",
-        Path(run_dir) / "id0" / f"{problem_id}.{num}.starpar.vtk",
-        Path(run_dir) / f"{problem_id}.{num}.starpar.vtk",
-    )
-    path = next((candidate for candidate in candidates if candidate.exists()), None)
-    return None if path is None else read_starpar(path)
-
-
 def _render_single_view(
     slc,
     view,
@@ -405,6 +400,7 @@ def render_story_frames(
     stop_frame=None,
     overwrite=False,
     particles=True,
+    particle_time_tolerance=None,
     volume_stride=1,
     volume_max_bytes=None,
     volume_opacity_scale=0.08,
@@ -430,6 +426,7 @@ def render_story_frames(
     slice_cache = {}
     derived_cache = {}
     particle_cache = {}
+    particle_series = None
     volume_cache = {}
     volume_series = None
     view_cache = {}
@@ -450,22 +447,22 @@ def render_story_frames(
         return derived_cache[key]
 
     def load_particles(request):
+        nonlocal particle_series
         if not particles or request.particle_alpha <= 0.0:
             return None
-        key = request.source_num
+        if particle_series is None:
+            particle_series = index_starpar_series(run_dir, problem_id)
+        matched = match_starpar_time(
+            particle_series,
+            request.simulation_time,
+            time_tolerance=particle_time_tolerance,
+        )
+        if matched is None:
+            return None
+        key = matched["path"]
         if key not in particle_cache:
-            particle_cache[key] = _particle_frame(run_dir, problem_id, key)
-        particle_frame = particle_cache[key]
-        if particle_frame is not None:
-            difference = abs(
-                float(particle_frame["time"]) - request.simulation_time
-            )
-            if difference > time_tolerance:
-                raise ValueError(
-                    f"particle time mismatch for output {key}: "
-                    f"{particle_frame['time']:g} versus {request.simulation_time:g}"
-                )
-        return particle_frame
+            particle_cache[key] = read_starpar(key)
+        return particle_cache[key]
 
     def load_volume(request):
         nonlocal volume_series
@@ -626,6 +623,7 @@ def _parser():
     parser.add_argument("--volume-max-gib", type=float, default=8.0)
     parser.add_argument("--volume-opacity-scale", type=float, default=0.08)
     parser.add_argument("--no-particles", action="store_true")
+    parser.add_argument("--particle-time-tolerance", type=float)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--movie", action="store_true")
     parser.add_argument("--movie-path", type=Path)
@@ -695,6 +693,11 @@ def main(argv=None):
         parser.error("--volume-max-gib must be positive")
     if args.volume_opacity_scale <= 0.0:
         parser.error("--volume-opacity-scale must be positive")
+    if (
+        args.particle_time_tolerance is not None
+        and args.particle_time_tolerance < 0.0
+    ):
+        parser.error("--particle-time-tolerance must be non-negative")
 
     fps = args.fps if args.fps is not None else (4.0 if args.preview else 30.0)
     width = args.width if args.width is not None else (960 if args.preview else 1920)
@@ -768,6 +771,7 @@ def main(argv=None):
         },
         "render": {
             "particles": not args.no_particles,
+            "particle_time_tolerance": args.particle_time_tolerance,
             "start_frame": args.start_frame,
             "stop_frame": args.stop_frame,
             "overwrite": args.overwrite,
@@ -791,6 +795,7 @@ def main(argv=None):
         stop_frame=args.stop_frame,
         overwrite=args.overwrite,
         particles=not args.no_particles,
+        particle_time_tolerance=args.particle_time_tolerance,
         volume_stride=volume_stride,
         volume_max_bytes=int(args.volume_max_gib * 1024**3),
         volume_opacity_scale=args.volume_opacity_scale,

@@ -209,22 +209,22 @@ def test_particle_time_mismatch_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(movie, "derive_plane_fields", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         movie,
-        "_particle_frame",
-        lambda *args: {"time": 2.0, "particles": {}},
+        "index_starpar_series",
+        lambda *args: [{"path": "particle.vtk", "num": "0002", "time": 2.0}],
     )
     monkeypatch.setattr(
         movie,
         "_render_single_view",
         lambda *args, **kwargs: np.zeros((8, 12, 4), dtype=np.uint8),
     )
-    with pytest.raises(ValueError, match="particle time mismatch"):
+    with pytest.raises(FileNotFoundError, match="no particle output matches"):
         movie.render_story_frames(
             [request(0, particle_alpha=1.0)],
             tmp_path,
             "R8",
             tmp_path / "output",
             settings=CanvasSettings(width=12, height=8, dpi=10),
-            time_tolerance=0.01,
+            particle_time_tolerance=0.01,
         )
 
 

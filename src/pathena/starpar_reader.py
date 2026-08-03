@@ -195,6 +195,73 @@ def read_starpar(path):
     }
 
 
+def read_starpar_metadata(path):
+    """Read particle output number and time without loading its table."""
+    path = os.fspath(path)
+    star = {}
+    with open(path, "rb") as stream:
+        while "time" not in star:
+            line = stream.readline()
+            if not line:
+                raise ValueError(f"{path}: reached EOF before particle time")
+            _parse_starvtk_line(line, star)
+    match = _NUM_RE.search(os.path.basename(path))
+    return {
+        "path": path,
+        "num": match.group(1) if match else None,
+        "time": float(star["time"]),
+    }
+
+
+def discover_starpar_paths(basedir, problem_id):
+    """Discover the first available standard star-particle series layout."""
+    patterns = [
+        os.path.join(basedir, "starpar", f"{problem_id}.*.starpar.vtk"),
+        os.path.join(basedir, "id0", f"{problem_id}.*.starpar.vtk"),
+        os.path.join(basedir, f"{problem_id}.*.starpar.vtk"),
+    ]
+    for pattern in patterns:
+        paths = sorted(glob.glob(pattern))
+        if paths:
+            return paths
+    return []
+
+
+def index_starpar_series(basedir, problem_id):
+    """Index particle files in physical-time order without loading particles."""
+    records = [
+        read_starpar_metadata(path)
+        for path in discover_starpar_paths(basedir, problem_id)
+    ]
+    return sorted(records, key=lambda record: (record["time"], record["num"] or ""))
+
+
+def match_starpar_time(records, target_time, time_tolerance=None):
+    """Match a particle record, defaulting to half the median output cadence."""
+    if not records:
+        return None
+    times = np.asarray([record["time"] for record in records], dtype=float)
+    if time_tolerance is None:
+        differences = np.diff(np.unique(times))
+        positive = differences[differences > 0.0]
+        time_tolerance = (
+            0.5 * float(np.median(positive)) + 1.0e-6
+            if positive.size else 0.01
+        )
+    if time_tolerance < 0.0:
+        raise ValueError("particle time tolerance must be non-negative")
+    target_time = float(target_time)
+    nearest = min(records, key=lambda record: abs(record["time"] - target_time))
+    difference = abs(nearest["time"] - target_time)
+    if difference > time_tolerance:
+        raise FileNotFoundError(
+            f"no particle output matches t={target_time:g} within "
+            f"{time_tolerance:g}; closest is {nearest['num']} at "
+            f"t={nearest['time']:g} (difference {difference:g})"
+        )
+    return nearest
+
+
 def read_starpar_series(pattern):
     """Read every starpar file matching a glob pattern, sorted by filename."""
     return [read_starpar(p) for p in sorted(glob.glob(pattern))]
