@@ -3,10 +3,12 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib
 import matplotlib.image as mpl_image
 import matplotlib.patheffects as path_effects
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
 
@@ -223,6 +225,37 @@ def _add_colorbar(fig, image, style):
     return colorbar
 
 
+def _new_canvas(settings):
+    figure = Figure(
+        figsize=(settings.width / settings.dpi, settings.height / settings.dpi),
+        dpi=settings.dpi,
+        facecolor=settings.background,
+    )
+    canvas = FigureCanvasAgg(figure)
+    axis = figure.add_axes([0.045, 0.055, 0.91, 0.875])
+    axis.set_facecolor(settings.background)
+    axis.set_axis_off()
+    return figure, canvas, axis
+
+
+def _finish_canvas(figure, canvas, slc, settings, title):
+    effects = _text_effects()
+    figure.text(
+        0.025, 0.965, title, color="white", fontsize=18,
+        ha="left", va="top", path_effects=effects,
+    )
+    time_myr = float(slc["time"]) * star_particle_units(settings.muH)["time_myr"]
+    figure.text(
+        0.975, 0.965, rf"$t={time_myr:.1f}\,\mathrm{{Myr}}$",
+        color="white", fontsize=15, ha="right", va="top",
+        path_effects=effects,
+    )
+    canvas.draw()
+    rgba = np.asarray(canvas.buffer_rgba(), dtype=np.uint8).copy()
+    figure.clear()
+    return rgba
+
+
 def render_slice_view(slc, plane, field, *, derived=None, particles=None,
                       particle_alpha=0.0, settings=None, title=None):
     """Render one fully annotated scalar slice as an RGBA pixel array."""
@@ -249,14 +282,7 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
     if style.get("log", False):
         data = np.ma.masked_less_equal(data, 0.0)
 
-    figure = Figure(
-        figsize=(settings.width / settings.dpi, settings.height / settings.dpi),
-        dpi=settings.dpi,
-        facecolor=settings.background,
-    )
-    canvas = FigureCanvasAgg(figure)
-    axis = figure.add_axes([0.045, 0.055, 0.91, 0.875])
-    axis.set_facecolor(settings.background)
+    figure, canvas, axis = _new_canvas(settings)
     image = axis.imshow(
         data,
         origin="lower",
@@ -269,7 +295,6 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
         interpolation="nearest",
         aspect="equal",
     )
-    axis.set_axis_off()
     draw_particles(
         axis,
         particles,
@@ -281,22 +306,206 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
     )
     _decorate_coordinates(axis, plane_data)
     _add_colorbar(figure, image, style)
+    return _finish_canvas(
+        figure, canvas, slc, settings, title or style["short"]
+    )
 
-    effects = _text_effects()
-    figure.text(
-        0.025, 0.965, title or style["short"], color="white", fontsize=18,
-        ha="left", va="top", path_effects=effects,
+
+def _plane_centers(plane_data):
+    x = plane_data.get("x_centers")
+    y = plane_data.get("y_centers")
+    if x is None:
+        edges = np.asarray(plane_data["x_edges"], dtype=float)
+        x = 0.5 * (edges[:-1] + edges[1:])
+    if y is None:
+        edges = np.asarray(plane_data["y_edges"], dtype=float)
+        y = 0.5 * (edges[:-1] + edges[1:])
+    return np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+
+
+def _streamline_fields(kind, plane):
+    suffixes = {
+        "x1": ("2", "3"),
+        "x2": ("1", "3"),
+        "x3": ("1", "2"),
+    }
+    if plane not in suffixes:
+        raise ValueError(f"unknown slice plane {plane!r}")
+    first, second = suffixes[plane]
+    if kind == "velocity":
+        return "v" + first, "v" + second, "T"
+    if kind == "magnetic":
+        return "B" + first, "B" + second, "Bmag"
+    raise ValueError("streamline kind must be 'velocity' or 'magnetic'")
+
+
+def render_streamline_view(slc, plane, kind, *, derived=None, settings=None,
+                           density=1.35, background_alpha=0.32, title=None):
+    """Render velocity or magnetic streamlines on a dim temperature slice."""
+    settings = CanvasSettings() if settings is None else settings
+    settings.validate()
+    if density <= 0.0:
+        raise ValueError("streamline density must be positive")
+    if not 0.0 <= background_alpha <= 1.0:
+        raise ValueError("background_alpha must lie in [0, 1]")
+    if plane not in slc["planes"]:
+        raise KeyError(f"slice frame has no plane {plane!r}")
+    plane_data = slc["planes"][plane]
+    derived = (
+        derive_plane_fields(slc, plane, muH=settings.muH)
+        if derived is None
+        else derived
     )
-    time_myr = float(slc["time"]) * star_particle_units(settings.muH)["time_myr"]
-    figure.text(
-        0.975, 0.965, rf"$t={time_myr:.1f}\,\mathrm{{Myr}}$",
-        color="white", fontsize=15, ha="right", va="top",
-        path_effects=effects,
+    u_name, v_name, color_name = _streamline_fields(kind, plane)
+    needed = ("T", u_name, v_name, color_name)
+    missing = [name for name in needed if name not in derived]
+    if missing:
+        raise KeyError(f"streamline fields are unavailable: {', '.join(missing)}")
+    expected = (plane_data["Ny"], plane_data["Nx"])
+    arrays = {
+        name: np.asarray(derived[name], dtype=float)
+        for name in needed
+    }
+    if any(array.shape != expected for array in arrays.values()):
+        raise ValueError(f"streamline arrays must all match plane shape {expected}")
+
+    figure, canvas, axis = _new_canvas(settings)
+    temperature = np.ma.masked_less_equal(arrays["T"], 0.0)
+    axis.imshow(
+        temperature,
+        origin="lower",
+        extent=(
+            plane_data["x_edges"][0], plane_data["x_edges"][-1],
+            plane_data["y_edges"][0], plane_data["y_edges"][-1],
+        ),
+        cmap=field_style("T")["cmap"],
+        norm=field_norm("T"),
+        interpolation="nearest",
+        aspect="equal",
+        alpha=background_alpha,
     )
-    canvas.draw()
-    rgba = np.asarray(canvas.buffer_rgba(), dtype=np.uint8).copy()
-    figure.clear()
-    return rgba
+    x, y = _plane_centers(plane_data)
+    color_values = np.ma.masked_less_equal(arrays[color_name], 0.0)
+    stream = axis.streamplot(
+        x,
+        y,
+        arrays[u_name],
+        arrays[v_name],
+        color=color_values,
+        cmap=field_style(color_name)["cmap"],
+        norm=field_norm(color_name),
+        density=density,
+        linewidth=1.15,
+        arrowsize=0.8,
+        minlength=0.08,
+        zorder=5,
+    )
+    axis.set_xlim(plane_data["x_edges"][0], plane_data["x_edges"][-1])
+    axis.set_ylim(plane_data["y_edges"][0], plane_data["y_edges"][-1])
+    axis.set_aspect("equal", adjustable="box")
+    _decorate_coordinates(axis, plane_data)
+    _add_colorbar(figure, stream.lines, field_style(color_name))
+    default_title = (
+        "Velocity streamlines colored by temperature"
+        if kind == "velocity"
+        else "Magnetic streamlines colored by field strength"
+    )
+    return _finish_canvas(
+        figure, canvas, slc, settings, title or default_title
+    )
+
+
+def _normalized_intensity(data, field):
+    values = np.asarray(data, dtype=float)
+    normalized = field_norm(field)(values)
+    return np.ma.filled(normalized, 0.0).clip(0.0, 1.0)
+
+
+def _get_cmap(name):
+    registry = getattr(matplotlib, "colormaps", None)
+    if registry is not None:
+        return registry.get_cmap(name)
+    from matplotlib import cm
+    return cm.get_cmap(name)
+
+
+def radiation_composite_rgba(fuv, lyc, *, fuv_cmap="magma",
+                             lyc_cmap="winter"):
+    """Map FUV and LyC independently and combine them with screen blending."""
+    fuv = np.asarray(fuv, dtype=float)
+    lyc = np.asarray(lyc, dtype=float)
+    if fuv.shape != lyc.shape or fuv.ndim != 2:
+        raise ValueError("FUV and LyC arrays must be matching two-dimensional maps")
+    fuv_level = _normalized_intensity(fuv, "Erad_PE")
+    lyc_level = _normalized_intensity(lyc, "Erad_PH")
+    fuv_rgb = _get_cmap(fuv_cmap)(fuv_level)[..., :3] * fuv_level[..., None]
+    lyc_rgb = _get_cmap(lyc_cmap)(lyc_level)[..., :3] * lyc_level[..., None]
+    rgb = 1.0 - (1.0 - fuv_rgb) * (1.0 - lyc_rgb)
+    alpha = np.ones(fuv.shape + (1,), dtype=float)
+    return np.rint(np.concatenate([rgb, alpha], axis=-1) * 255.0).astype(np.uint8)
+
+
+def _add_radiation_colorbar(fig, bounds, field, cmap, label):
+    axis = fig.add_axes(bounds)
+    axis.set_facecolor((0.0, 0.0, 0.0, 0.65))
+    scalar = ScalarMappable(norm=field_norm(field), cmap=cmap)
+    colorbar = fig.colorbar(scalar, cax=axis, orientation="horizontal")
+    colorbar.set_label(label, color="white", fontsize=9, labelpad=1)
+    colorbar.ax.tick_params(colors="white", labelsize=7, length=2, pad=1)
+    colorbar.outline.set_edgecolor("white")
+    colorbar.outline.set_linewidth(0.7)
+    return colorbar
+
+
+def render_radiation_view(slc, plane="x2", *, derived=None, settings=None,
+                          fuv_cmap="magma", lyc_cmap="winter", title=None):
+    """Render the dual-colormap FUV/LyC screen composite on one slice plane."""
+    settings = CanvasSettings() if settings is None else settings
+    settings.validate()
+    if plane not in slc["planes"]:
+        raise KeyError(f"slice frame has no plane {plane!r}")
+    plane_data = slc["planes"][plane]
+    derived = (
+        derive_plane_fields(slc, plane, muH=settings.muH)
+        if derived is None
+        else derived
+    )
+    missing = [name for name in ("Erad_PE", "Erad_PH") if name not in derived]
+    if missing:
+        raise KeyError(f"radiation fields are unavailable: {', '.join(missing)}")
+    composite = radiation_composite_rgba(
+        derived["Erad_PE"],
+        derived["Erad_PH"],
+        fuv_cmap=fuv_cmap,
+        lyc_cmap=lyc_cmap,
+    )
+    expected = (plane_data["Ny"], plane_data["Nx"])
+    if composite.shape[:2] != expected:
+        raise ValueError(f"radiation arrays must match plane shape {expected}")
+
+    figure, canvas, axis = _new_canvas(settings)
+    axis.imshow(
+        composite,
+        origin="lower",
+        extent=(
+            plane_data["x_edges"][0], plane_data["x_edges"][-1],
+            plane_data["y_edges"][0], plane_data["y_edges"][-1],
+        ),
+        interpolation="nearest",
+        aspect="equal",
+    )
+    _decorate_coordinates(axis, plane_data)
+    _add_radiation_colorbar(
+        figure, [0.18, 0.895, 0.27, 0.027], "Erad_PE", fuv_cmap,
+        r"FUV $[\mathrm{erg\,cm^{-3}}]$",
+    )
+    _add_radiation_colorbar(
+        figure, [0.55, 0.895, 0.27, 0.027], "Erad_PH", lyc_cmap,
+        r"LyC $[\mathrm{erg\,cm^{-3}}]$",
+    )
+    return _finish_canvas(
+        figure, canvas, slc, settings, title or "FUV + LyC radiation fields"
+    )
 
 
 def write_png_frame(path, rgba, overwrite=False):

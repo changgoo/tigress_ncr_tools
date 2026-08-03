@@ -7,7 +7,10 @@ from tigress_ncr_tools.story_renderers import (
     blend_rgba,
     field_norm,
     field_style,
+    radiation_composite_rgba,
+    render_radiation_view,
     render_slice_view,
+    render_streamline_view,
     write_png_frame,
 )
 
@@ -41,12 +44,21 @@ def synthetic_slice():
 def derived(shape):
     y, x = np.indices(shape)
     base = 10.0 ** (-2.0 + 5.0 * (x + y) / max(1, sum(shape) - 2))
+    xc = x - 0.5 * (shape[1] - 1)
+    yc = y - 0.5 * (shape[0] - 1)
     return {
         "nH": base,
         "nH2": 0.25 * base,
         "nHI": 0.5 * base,
         "nHII": 0.05 * base,
         "T": 10.0 ** (2.0 + 4.0 * y / max(1, shape[0] - 1)),
+        "v1": -yc,
+        "v3": xc,
+        "B1": np.ones(shape),
+        "B3": 0.25 * np.sin(x / 2.0),
+        "Bmag": 1.0 + 10.0 * (x + 1.0) / shape[1],
+        "Erad_PE": 10.0 ** (-15.0 + 5.0 * x / max(1, shape[1] - 1)),
+        "Erad_PH": 10.0 ** (-15.0 + 5.0 * y / max(1, shape[0] - 1)),
     }
 
 
@@ -107,6 +119,44 @@ def test_rgba_blending_has_exact_endpoints_and_validation():
         blend_rgba(black, white[:, :2], 0.5)
     with pytest.raises(ValueError, match="fraction"):
         blend_rgba(black, white, 1.1)
+
+
+def test_streamline_views_and_radiation_canvas_are_fixed_size():
+    slc = synthetic_slice()
+    settings = CanvasSettings(width=320, height=180, dpi=100)
+    fields = derived((10, 8))
+    velocity = render_streamline_view(
+        slc, "x2", "velocity", derived=fields, settings=settings, density=0.6
+    )
+    magnetic = render_streamline_view(
+        slc, "x2", "magnetic", derived=fields, settings=settings, density=0.6
+    )
+    radiation = render_radiation_view(
+        slc, "x2", derived=fields, settings=settings
+    )
+    assert velocity.shape == magnetic.shape == radiation.shape == (180, 320, 4)
+    assert np.count_nonzero(velocity != magnetic) > 0
+    assert np.count_nonzero(magnetic != radiation) > 0
+    with pytest.raises(ValueError, match="kind"):
+        render_streamline_view(
+            slc, "x2", "invalid", derived=fields, settings=settings
+        )
+
+
+def test_radiation_screen_composite_preserves_two_channels():
+    low = np.zeros((3, 4))
+    high = np.full((3, 4), 1.0e-10)
+    dark = radiation_composite_rgba(low, low)
+    fuv = radiation_composite_rgba(high, low)
+    lyc = radiation_composite_rgba(low, high)
+    combined = radiation_composite_rgba(high, high)
+    assert np.all(dark[..., :3] == 0)
+    assert np.all(dark[..., 3] == 255)
+    assert np.count_nonzero(fuv[..., :3] != lyc[..., :3]) > 0
+    assert np.all(combined[..., :3] >= fuv[..., :3])
+    assert np.all(combined[..., :3] >= lyc[..., :3])
+    with pytest.raises(ValueError, match="matching"):
+        radiation_composite_rgba(low, high[:, :2])
 
 
 def test_atomic_png_write_and_overwrite(tmp_path):
