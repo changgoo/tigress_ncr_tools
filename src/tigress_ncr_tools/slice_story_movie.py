@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Render the slice-backed stages of the TIGRESS-NCR story movie."""
+"""Render the slice and full-volume stages of the TIGRESS-NCR story movie."""
 
 import argparse
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -11,6 +12,12 @@ from pathlib import Path
 from pathena.slice_fields import derive_plane_fields
 from pathena.slicevtk_reader import index_slicevtk_series, read_slicevtk
 from pathena.starpar_reader import read_starpar
+from pathena.vtk3d_reader import (
+    discover_vtk_pieces,
+    estimate_volume_bytes,
+    inspect_vtk_volume,
+    read_vtk_volume,
+)
 
 from .plot_suite_projections import codec_quality_args, resolve_video_codec
 from .story_renderers import (
@@ -19,6 +26,7 @@ from .story_renderers import (
     render_radiation_view,
     render_slice_view,
     render_streamline_view,
+    render_volume_view,
     write_png_frame,
 )
 from .storyboard import (
@@ -26,6 +34,7 @@ from .storyboard import (
     build_slice_storyboard,
     write_frame_manifest,
 )
+from .volume_renderer import render_temperature_volume, volume_input_fields
 
 
 REQUIRED_FIELD_GROUPS = (
@@ -126,6 +135,26 @@ def require_slice_story_capabilities(records):
     return report
 
 
+def volume_preflight_report(run_dir, problem_id, num, time_tolerance=0.01):
+    """Inspect one full-volume output without allocating its field arrays."""
+    paths = discover_vtk_pieces(run_dir, problem_id, num)
+    layout = inspect_vtk_volume(paths, time_tolerance=time_tolerance)
+    selected = volume_input_fields(layout.field_names)
+    required_bytes = estimate_volume_bytes(layout, selected)
+    return {
+        "output_num": str(num),
+        "time": layout.time,
+        "piece_count": len(paths),
+        "shape_xyz": list(layout.shape_xyz),
+        "left_edge": list(layout.left_edge),
+        "right_edge": list(layout.right_edge),
+        "selected_fields": list(selected),
+        "assembly_bytes": required_bytes,
+        "scipy_available": importlib.util.find_spec("scipy") is not None,
+        "ready_for_volume_story": importlib.util.find_spec("scipy") is not None,
+    }
+
+
 def scaled_durations(scale):
     """Return default storyboard durations multiplied by ``scale``."""
     if scale <= 0.0:
@@ -182,10 +211,6 @@ def _render_single_view(
         return render_radiation_view(
             slc, plane=plane, derived=derived, settings=settings
         )
-    if view == "volume":
-        raise NotImplementedError(
-            "full-volume rendering is not implemented; render with --no-volume"
-        )
     raise ValueError(f"unknown storyboard view {view!r}")
 
 
@@ -201,6 +226,9 @@ def render_story_frames(
     stop_frame=None,
     overwrite=False,
     particles=True,
+    volume_stride=1,
+    volume_max_bytes=None,
+    volume_opacity_scale=0.08,
 ):
     """Render a sequence of storyboard requests with source/view caching."""
     settings = CanvasSettings() if settings is None else settings
@@ -212,6 +240,10 @@ def render_story_frames(
     )
     if stop_frame < start_frame:
         raise ValueError("stop_frame must be greater than or equal to start_frame")
+    if not isinstance(volume_stride, int) or volume_stride < 1:
+        raise ValueError("volume_stride must be a positive integer")
+    if volume_max_bytes is not None and volume_max_bytes <= 0:
+        raise ValueError("volume_max_bytes must be positive")
     output_dir = Path(output_dir)
     frames_dir = output_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +251,7 @@ def render_story_frames(
     slice_cache = {}
     derived_cache = {}
     particle_cache = {}
+    volume_cache = {}
     view_cache = {}
     written = []
     skipped = []
@@ -254,6 +287,28 @@ def render_story_frames(
                 )
         return particle_frame
 
+    def load_volume(request):
+        key = request.source_num
+        if key is None:
+            raise ValueError("volume rendering requires a numbered source output")
+        if key not in volume_cache:
+            paths = discover_vtk_pieces(run_dir, problem_id, key)
+            layout = inspect_vtk_volume(paths, time_tolerance=time_tolerance)
+            difference = abs(layout.time - request.simulation_time)
+            if difference > time_tolerance:
+                raise ValueError(
+                    f"volume time mismatch for output {key}: "
+                    f"{layout.time:g} versus {request.simulation_time:g}"
+                )
+            selected = volume_input_fields(layout.field_names)
+            volume_cache[key] = read_vtk_volume(
+                paths,
+                selected,
+                time_tolerance=time_tolerance,
+                max_bytes=volume_max_bytes,
+            )
+        return volume_cache[key]
+
     def render_view(request, which):
         view = getattr(request, f"view_{which}")
         plane = getattr(request, f"plane_{which}")
@@ -265,24 +320,38 @@ def render_story_frames(
             view,
             plane,
             field,
+            round(request.camera_fraction, 10) if view == "volume" else None,
             round(request.particle_alpha, 10),
             bool(particles),
         )
         if cache_key not in view_cache:
-            slc = load_slice(request.source_path)
-            derived = None if plane is None else load_derived(
-                slc, request.source_path, plane
-            )
-            view_cache[cache_key] = _render_single_view(
-                slc,
-                view,
-                plane,
-                field,
-                derived=derived,
-                particles=load_particles(request),
-                particle_alpha=request.particle_alpha,
-                settings=settings,
-            )
+            if view == "volume":
+                volume = load_volume(request)
+                raw_image = render_temperature_volume(
+                    volume,
+                    request.camera_fraction,
+                    stride=volume_stride,
+                    opacity_scale=volume_opacity_scale,
+                    muH=settings.muH,
+                )
+                view_cache[cache_key] = render_volume_view(
+                    raw_image, volume["time"], settings=settings
+                )
+            else:
+                slc = load_slice(request.source_path)
+                derived = None if plane is None else load_derived(
+                    slc, request.source_path, plane
+                )
+                view_cache[cache_key] = _render_single_view(
+                    slc,
+                    view,
+                    plane,
+                    field,
+                    derived=derived,
+                    particles=load_particles(request),
+                    particle_alpha=request.particle_alpha,
+                    settings=settings,
+                )
         return view_cache[cache_key]
 
     for request in requests[start_frame:stop_frame]:
@@ -366,6 +435,9 @@ def _parser():
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--no-volume", action="store_true")
+    parser.add_argument("--volume-stride", type=int)
+    parser.add_argument("--volume-max-gib", type=float, default=8.0)
+    parser.add_argument("--volume-opacity-scale", type=float, default=0.08)
     parser.add_argument("--no-particles", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--movie", action="store_true")
@@ -390,14 +462,37 @@ def main(argv=None):
     )
     report = slice_preflight_report(records)
     if args.preflight:
+        if not args.no_volume:
+            last_index = len(records) - 1
+            stop_index = last_index if args.stop_index is None else args.stop_index
+            freeze_index = (
+                (args.start_index + stop_index) // 2
+                if args.freeze_index is None
+                else args.freeze_index
+            )
+            if not 0 <= args.start_index <= freeze_index <= stop_index <= last_index:
+                parser.error(
+                    "require 0 <= start-index <= freeze-index <= stop-index"
+                )
+            try:
+                report["volume"] = volume_preflight_report(
+                    args.run_dir,
+                    args.problem_id,
+                    records[freeze_index].get("num"),
+                    time_tolerance=args.time_tolerance,
+                )
+            except (FileNotFoundError, KeyError, ValueError, NotImplementedError) as error:
+                report["volume"] = {
+                    "ready_for_volume_story": False,
+                    "error": str(error),
+                }
         print(json.dumps(report, indent=2))
         return report
     require_slice_story_capabilities(records)
-    if not args.no_volume:
-        parser.error(
-            "the 3D renderer is the next milestone; use --no-volume for the "
-            "implemented slice-only movie"
-        )
+    if args.volume_max_gib <= 0.0:
+        parser.error("--volume-max-gib must be positive")
+    if args.volume_opacity_scale <= 0.0:
+        parser.error("--volume-opacity-scale must be positive")
 
     fps = args.fps if args.fps is not None else (4.0 if args.preview else 30.0)
     width = args.width if args.width is not None else (960 if args.preview else 1920)
@@ -407,6 +502,13 @@ def main(argv=None):
         if args.duration_scale is not None
         else (0.15 if args.preview else 1.0)
     )
+    volume_stride = (
+        args.volume_stride
+        if args.volume_stride is not None
+        else (4 if args.preview else 2)
+    )
+    if volume_stride < 1:
+        parser.error("--volume-stride must be a positive integer")
     try:
         durations = scaled_durations(duration_scale)
         requests = build_slice_storyboard(
@@ -416,7 +518,7 @@ def main(argv=None):
             freeze_index=args.freeze_index,
             stop_index=args.stop_index,
             durations=durations,
-            include_volume=False,
+            include_volume=not args.no_volume,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -435,6 +537,9 @@ def main(argv=None):
         stop_frame=args.stop_frame,
         overwrite=args.overwrite,
         particles=not args.no_particles,
+        volume_stride=volume_stride,
+        volume_max_bytes=int(args.volume_max_gib * 1024**3),
+        volume_opacity_scale=args.volume_opacity_scale,
     )
     print(
         f"Rendered {len(result['written'])} frames; "

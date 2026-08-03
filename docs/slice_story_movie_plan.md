@@ -122,9 +122,10 @@ A new `pathena.vtk3d_reader` module will read the full-volume snapshot. It will:
 - Load only density, pressure, `xH2`, and `xe` for the temperature volume.
 - Report the native-resolution memory estimate before allocation.
 
-The preferred renderer is PyVista/VTK as an optional `movie3d` dependency.
-Headless rendering must be tested on the target system using an available EGL,
-OSMesa, or Xvfb route.
+The target environment did not provide PyVista/VTK, so the implemented backend
+uses a deterministic orthographic ray compositor with SciPy interpolation as
+the optional `movie3d` dependency. This avoids an EGL, OSMesa, or Xvfb runtime
+requirement while retaining an explicitly registered camera path.
 
 The volume will be colored by temperature and use density to control opacity.
 This prevents diffuse hot material from making the full domain opaque. The
@@ -218,7 +219,7 @@ Planned operational modes:
 - Implement and test MPI-piece metadata and assembly using a small synthetic
   VTK fixture.
 - Add memory preflight and rendering cache.
-- Add PyVista rendering, headless checks, and registered camera rotation.
+- Add density-opacity temperature rendering and registered camera rotation.
 
 ### 6. Production and polish
 

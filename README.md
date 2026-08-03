@@ -65,22 +65,28 @@ required fields first:
 slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR --preflight
 ```
 
-The current slice-only milestone renders the density/species/temperature
-sequence, the evolving XZ view, velocity and magnetic streamlines, and the
-FUV/LyC composite. It writes numbered PNGs plus `frame_manifest.csv`:
+The renderer creates the density/species/temperature sequence, a
+density-opacity temperature volume with a registered XY-to-XZ camera turn,
+the evolving XZ view, velocity and magnetic streamlines, and the FUV/LyC
+composite. Install the volume interpolation dependency with
+`pip install -e '.[movie3d]'`. The command writes numbered PNGs plus
+`frame_manifest.csv`:
 
 ```bash
 slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \
-  --no-volume --preview --output-dir preview
+  --preview --output-dir preview
 
 slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \
-  --no-volume --movie --output-dir movie_slice_story
+  --movie --output-dir movie_slice_story
 ```
 
 `--start-frame`, `--stop-frame`, and the default skip-existing behavior make
-long renders resumable. Use `--overwrite` to replace existing PNGs. Full-volume
-temperature rendering and the registered top-to-side camera turn remain the
-next implementation milestone; until then, rendering requires `--no-volume`.
+long renders resumable. Use `--overwrite` to replace existing PNGs. Volume
+rendering assembles the complete selected 3D fields, then uses render-only
+subsampling: preview defaults to `--volume-stride 4`, production to stride 2,
+and `--volume-stride 1` preserves native resolution. `--volume-max-gib` limits
+the full-array allocation, `--volume-opacity-scale` tunes visibility, and
+`--no-volume` retains the lighter slice-only path.
 
 ## Surface-density statistics
 

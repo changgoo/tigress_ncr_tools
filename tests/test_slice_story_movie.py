@@ -1,5 +1,6 @@
 from dataclasses import fields
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.image as mpl_image
 import numpy as np
@@ -47,6 +48,21 @@ def request(frame_number, *, field_a="nH", field_b=None, blend=0.0,
         field_b=field_b,
         blend=blend,
         particle_alpha=particle_alpha,
+    )
+
+
+def volume_request(frame_number, camera_fraction):
+    return FrameRequest(
+        frame_number=frame_number,
+        scene="camera_turn",
+        source_index=0,
+        source_path="source.slice.vtk",
+        source_num="0001",
+        simulation_time=1.0,
+        view_a="volume",
+        plane_a=None,
+        field_a="T",
+        camera_fraction=camera_fraction,
     )
 
 
@@ -160,6 +176,54 @@ def test_particle_time_mismatch_is_rejected(tmp_path, monkeypatch):
             settings=CanvasSettings(width=12, height=8, dpi=10),
             time_tolerance=0.01,
         )
+
+
+def test_volume_pipeline_caches_assembly_and_keys_camera_angle(
+    tmp_path, monkeypatch
+):
+    calls = {"inspect": 0, "read": 0, "camera": []}
+    layout = SimpleNamespace(
+        time=1.0,
+        field_names=("density", "temperature"),
+    )
+    volume = {"time": 1.0, "fields": {}}
+    monkeypatch.setattr(movie, "discover_vtk_pieces", lambda *args: ["piece.vtk"])
+
+    def fake_inspect(*args, **kwargs):
+        calls["inspect"] += 1
+        return layout
+
+    def fake_read(*args, **kwargs):
+        calls["read"] += 1
+        return volume
+
+    def fake_volume_render(data, fraction, **kwargs):
+        calls["camera"].append(fraction)
+        return fraction
+
+    monkeypatch.setattr(movie, "inspect_vtk_volume", fake_inspect)
+    monkeypatch.setattr(movie, "read_vtk_volume", fake_read)
+    monkeypatch.setattr(movie, "render_temperature_volume", fake_volume_render)
+    monkeypatch.setattr(
+        movie,
+        "render_volume_view",
+        lambda image, time, settings: np.full(
+            (settings.height, settings.width, 4), int(200 * image), dtype=np.uint8
+        ),
+    )
+    result = movie.render_story_frames(
+        [volume_request(0, 0.0), volume_request(1, 1.0)],
+        tmp_path,
+        "R8",
+        tmp_path / "output",
+        settings=CanvasSettings(width=20, height=12, dpi=10),
+        particles=False,
+        volume_stride=2,
+    )
+    assert len(result["written"]) == 2
+    assert calls == {"inspect": 1, "read": 1, "camera": [0.0, 1.0]}
+    assert np.allclose(mpl_image.imread(result["written"][0]), 0.0)
+    assert np.allclose(mpl_image.imread(result["written"][1]), 200.0 / 255.0)
 
 
 def test_encode_story_movie_uses_contiguous_numbered_frames(tmp_path, monkeypatch):

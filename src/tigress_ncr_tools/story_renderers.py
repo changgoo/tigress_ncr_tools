@@ -311,6 +311,61 @@ def render_slice_view(slc, plane, field, *, derived=None, particles=None,
     )
 
 
+def render_volume_view(volume_image, time, *, settings=None, title=None):
+    """Place a ray-composited volume in the shared annotated movie canvas."""
+    settings = CanvasSettings() if settings is None else settings
+    settings.validate()
+    pixels = np.asarray(volume_image.rgba)
+    if pixels.ndim != 3 or pixels.shape[-1] != 4:
+        raise ValueError("volume image must have shape (height, width, 4)")
+    if len(volume_image.extent) != 4:
+        raise ValueError("volume image extent must contain four bounds")
+    fraction = float(volume_image.camera_fraction)
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("volume camera fraction must lie in [0, 1]")
+
+    figure, canvas, axis = _new_canvas(settings)
+    axis.imshow(
+        pixels,
+        origin="lower",
+        extent=volume_image.extent,
+        interpolation="bilinear",
+        aspect="equal",
+    )
+    xmin, xmax, ymin, ymax = volume_image.extent
+    if fraction == 0.0 or fraction == 1.0:
+        _decorate_coordinates(axis, {
+            "normal": "x3" if fraction == 0.0 else "x2",
+            "x_edges": np.asarray([xmin, xmax]),
+            "y_edges": np.asarray([ymin, ymax]),
+        })
+    else:
+        angle = 90.0 * fraction
+        axis.text(
+            0.025,
+            0.025,
+            rf"$x$ horizontal; camera turn ${angle:.0f}^\circ$",
+            transform=axis.transAxes,
+            color="white",
+            fontsize=10,
+            ha="left",
+            va="bottom",
+            path_effects=_text_effects(),
+        )
+    scalar = ScalarMappable(norm=field_norm("T"), cmap=field_style("T")["cmap"])
+    _add_colorbar(figure, scalar, field_style("T"))
+    if title is None:
+        if fraction == 0.0:
+            title = "Temperature volume — top-down (XY)"
+        elif fraction == 1.0:
+            title = "Temperature volume — side-on (XZ)"
+        else:
+            title = f"Temperature volume — camera turn {90.0 * fraction:.0f}°"
+    return _finish_canvas(
+        figure, canvas, {"time": float(time)}, settings, title
+    )
+
+
 def _plane_centers(plane_data):
     x = plane_data.get("x_centers")
     y = plane_data.get("y_centers")

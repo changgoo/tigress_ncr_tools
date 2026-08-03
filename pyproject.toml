@@ -14,6 +14,9 @@ dependencies = [
   "pandas",
 ]
 
+[project.optional-dependencies]
+movie3d = ["scipy"]
+
 [project.scripts]
 archive-tigress-snapshots = "tigress_ncr_tools.archive_snapshots:main"
 check-suite = "tigress_ncr_tools.check_suite:main"
