@@ -325,6 +325,68 @@ def discover_vtk_pieces(run_dir, problem_id, num):
     )
 
 
+def discover_vtk_output_numbers(run_dir, problem_id):
+    """Return sorted output numbers available as live directories or tars."""
+    run_dir = Path(run_dir).expanduser()
+    vtk_dir = run_dir / "vtk"
+    numbers = set()
+    if vtk_dir.is_dir():
+        for entry in vtk_dir.iterdir():
+            if entry.is_dir() and entry.name.isdigit():
+                numbers.add(int(entry.name))
+        archive_pattern = re.compile(
+            rf"^{re.escape(problem_id)}\.(?P<num>\d+)\.tar$"
+        )
+        for entry in vtk_dir.iterdir():
+            match = archive_pattern.fullmatch(entry.name)
+            if entry.is_file() and match:
+                numbers.add(int(match.group("num")))
+    legacy_pattern = re.compile(
+        rf"^{re.escape(problem_id)}\.(?P<num>\d+)\.vtk$"
+    )
+    for directory in (run_dir / "id0", run_dir):
+        if not directory.is_dir():
+            continue
+        for entry in directory.iterdir():
+            match = legacy_pattern.fullmatch(entry.name)
+            if entry.is_file() and match:
+                numbers.add(int(match.group("num")))
+    return [f"{number:04d}" for number in sorted(numbers)]
+
+
+def index_vtk_volume_series(run_dir, problem_id):
+    """Index full-volume outputs by metadata time without reading payloads."""
+    records = []
+    for number in discover_vtk_output_numbers(run_dir, problem_id):
+        paths = discover_vtk_pieces(run_dir, problem_id, number)
+        piece = read_vtk_piece_metadata(paths[0])
+        records.append({
+            "num": number,
+            "time": piece.time,
+            "paths": paths,
+            "field_names": tuple(sorted(piece.fields)),
+        })
+    return sorted(records, key=lambda record: (record["time"], record["num"]))
+
+
+def match_vtk_volume_time(records, target_time, time_tolerance=0.01):
+    """Return the nearest full-volume record within a physical-time tolerance."""
+    if time_tolerance < 0.0:
+        raise ValueError("time_tolerance must be non-negative")
+    if not records:
+        raise FileNotFoundError("no full-volume VTK outputs are available")
+    target_time = float(target_time)
+    nearest = min(records, key=lambda record: abs(record["time"] - target_time))
+    difference = abs(nearest["time"] - target_time)
+    if difference > time_tolerance:
+        raise FileNotFoundError(
+            f"no full-volume output matches t={target_time:g} within "
+            f"{time_tolerance:g}; closest is {nearest['num']} at "
+            f"t={nearest['time']:g} (difference {difference:g})"
+        )
+    return nearest
+
+
 def _boxes_overlap(first, second):
     return all(
         a0 < b1 and b0 < a1

@@ -237,7 +237,9 @@ def test_volume_pipeline_caches_assembly_and_keys_camera_angle(
         field_names=("density", "temperature"),
     )
     volume = {"time": 1.0, "fields": {}}
-    monkeypatch.setattr(movie, "discover_vtk_pieces", lambda *args: ["piece.vtk"])
+    matched = {"num": "0099", "time": 1.0, "paths": ["piece.vtk"]}
+    monkeypatch.setattr(movie, "index_vtk_volume_series", lambda *args: [matched])
+    monkeypatch.setattr(movie, "match_vtk_volume_time", lambda *args, **kwargs: matched)
 
     def fake_inspect(*args, **kwargs):
         calls["inspect"] += 1

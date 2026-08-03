@@ -5,8 +5,11 @@ import pytest
 
 from pathena.vtk3d_reader import (
     discover_vtk_pieces,
+    discover_vtk_output_numbers,
     estimate_volume_bytes,
+    index_vtk_volume_series,
     inspect_vtk_volume,
+    match_vtk_volume_time,
     read_vtk_piece_field,
     read_vtk_piece_metadata,
     read_vtk_volume,
@@ -177,3 +180,22 @@ def test_discover_and_assemble_archived_snapshot_without_extraction(tmp_path):
     assert np.allclose(
         volume["fields"]["density"][:, :, 2:], piece_fields(2.0)["density"]
     )
+
+
+def test_volume_series_indexes_and_matches_physical_time(tmp_path):
+    first_dir = tmp_path / "vtk" / "0002"
+    second_dir = tmp_path / "vtk" / "0010"
+    write_piece(
+        first_dir / "R8.0002.vtk", (0, 0, 0), piece_fields(0.0), time=20.0
+    )
+    write_piece(
+        second_dir / "R8.0010.vtk", (0, 0, 0), piece_fields(0.0), time=100.0
+    )
+    assert discover_vtk_output_numbers(tmp_path, "R8") == ["0002", "0010"]
+    series = index_vtk_volume_series(tmp_path, "R8")
+    assert [(item["num"], item["time"]) for item in series] == [
+        ("0002", 20.0), ("0010", 100.0)
+    ]
+    assert match_vtk_volume_time(series, 100.005, 0.01)["num"] == "0010"
+    with pytest.raises(FileNotFoundError, match="closest is 0010"):
+        match_vtk_volume_time(series, 90.0, 0.01)

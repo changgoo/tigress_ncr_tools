@@ -14,9 +14,10 @@ from pathena.slice_fields import derive_plane_fields
 from pathena.slicevtk_reader import index_slicevtk_series, read_slicevtk
 from pathena.starpar_reader import read_starpar
 from pathena.vtk3d_reader import (
-    discover_vtk_pieces,
     estimate_volume_bytes,
+    index_vtk_volume_series,
     inspect_vtk_volume,
+    match_vtk_volume_time,
     read_vtk_volume,
 )
 
@@ -218,14 +219,22 @@ def write_resolved_config(path, sections):
     return path
 
 
-def volume_preflight_report(run_dir, problem_id, num, time_tolerance=0.01):
+def volume_preflight_report(
+    run_dir, problem_id, target_time, *, slice_num=None, time_tolerance=0.01
+):
     """Inspect one full-volume output without allocating its field arrays."""
-    paths = discover_vtk_pieces(run_dir, problem_id, num)
+    series = index_vtk_volume_series(run_dir, problem_id)
+    matched = match_vtk_volume_time(
+        series, target_time, time_tolerance=time_tolerance
+    )
+    paths = matched["paths"]
     layout = inspect_vtk_volume(paths, time_tolerance=time_tolerance)
     selected = volume_input_fields(layout.field_names)
     required_bytes = estimate_volume_bytes(layout, selected)
     return {
-        "output_num": str(num),
+        "slice_output_num": None if slice_num is None else str(slice_num),
+        "slice_time": float(target_time),
+        "output_num": matched["num"],
         "time": layout.time,
         "piece_count": len(paths),
         "shape_xyz": list(layout.shape_xyz),
@@ -422,6 +431,7 @@ def render_story_frames(
     derived_cache = {}
     particle_cache = {}
     volume_cache = {}
+    volume_series = None
     view_cache = {}
     written = []
     skipped = []
@@ -458,11 +468,17 @@ def render_story_frames(
         return particle_frame
 
     def load_volume(request):
-        key = request.source_num
-        if key is None:
-            raise ValueError("volume rendering requires a numbered source output")
+        nonlocal volume_series
+        if volume_series is None:
+            volume_series = index_vtk_volume_series(run_dir, problem_id)
+        matched = match_vtk_volume_time(
+            volume_series,
+            request.simulation_time,
+            time_tolerance=time_tolerance,
+        )
+        key = matched["num"]
         if key not in volume_cache:
-            paths = discover_vtk_pieces(run_dir, problem_id, key)
+            paths = matched["paths"]
             layout = inspect_vtk_volume(paths, time_tolerance=time_tolerance)
             difference = abs(layout.time - request.simulation_time)
             if difference > time_tolerance:
@@ -663,7 +679,8 @@ def main(argv=None):
                 report["volume"] = volume_preflight_report(
                     args.run_dir,
                     args.problem_id,
-                    records[freeze_index].get("num"),
+                    records[freeze_index]["time"],
+                    slice_num=records[freeze_index].get("num"),
                     time_tolerance=args.time_tolerance,
                 )
             except (FileNotFoundError, KeyError, ValueError, NotImplementedError) as error:
