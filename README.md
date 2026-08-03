@@ -55,6 +55,33 @@ With `--movie`, the command uses the same ffmpeg workflow and defaults as
 `libx264` and falls back to `mpeg4`; `--movie-path`, `--codec`, `--crf`,
 `--qscale`, and `--bitrate` provide the same controls.
 
+## Slice story movie
+
+The slice-story renderer builds a deterministic presentation sequence from
+`slicevtk` and star-particle outputs. Inspect the available times, planes, and
+required fields first:
+
+```bash
+slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR --preflight
+```
+
+The current slice-only milestone renders the density/species/temperature
+sequence, the evolving XZ view, velocity and magnetic streamlines, and the
+FUV/LyC composite. It writes numbered PNGs plus `frame_manifest.csv`:
+
+```bash
+slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \
+  --no-volume --preview --output-dir preview
+
+slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \
+  --no-volume --movie --output-dir movie_slice_story
+```
+
+`--start-frame`, `--stop-frame`, and the default skip-existing behavior make
+long renders resumable. Use `--overwrite` to replace existing PNGs. Full-volume
+temperature rendering and the registered top-to-side camera turn remain the
+next implementation milestone; until then, rendering requires `--no-volume`.
+
 ## Surface-density statistics
 
 `surface-density-stats` reads the late-run `proj2d/theta0` maps in stored-time
