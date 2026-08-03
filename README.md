@@ -70,7 +70,8 @@ density-opacity temperature volume with a registered XY-to-XZ camera turn,
 the evolving XZ view, velocity and magnetic streamlines, and the FUV/LyC
 composite. Install the volume interpolation dependency with
 `pip install -e '.[movie3d]'`. The command writes numbered PNGs plus
-`frame_manifest.csv`:
+`frame_manifest.csv` and the exact resolved settings in
+`resolved_config.toml`:
 
 ```bash
 slice-story-movie /path/to/RUN --problem-id R8_8pc_NCR \

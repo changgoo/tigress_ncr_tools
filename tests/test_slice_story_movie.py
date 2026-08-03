@@ -82,9 +82,17 @@ def test_preflight_reports_capabilities_aliases_and_missing_fields():
     broken = record(x2=["density"])
     report = movie.slice_preflight_report([broken])
     assert not report["ready_for_slice_story"]
-    assert "cell_centered_B" in report["issues"][0]
+    assert any("cell_centered_B" in issue for issue in report["issues"])
     with pytest.raises(ValueError, match="preflight failed"):
         movie.require_slice_story_capabilities([broken])
+
+    early_without_final_fields = record(x2=list(RAW_BASE))
+    final_with_all_fields = record("0002", 2.0)
+    staged = movie.slice_preflight_report(
+        [early_without_final_fields, final_with_all_fields]
+    )
+    assert staged["ready_for_slice_story"]
+    assert staged["validated_stop_num"] == "0002"
 
 
 def test_duration_scaling_and_series_pattern():
@@ -97,6 +105,21 @@ def test_duration_scaling_and_series_pattern():
     assert movie.slice_series_pattern("/run", "R8", "midplane") == Path(
         "/run/slice/midplane/R8.*.midplane.slice.vtk"
     )
+
+
+def test_resolved_config_is_atomic_valid_toml(tmp_path):
+    tomllib = pytest.importorskip("tomllib")
+    path = movie.write_resolved_config(tmp_path / "resolved.toml", {
+        "story": {"fps": 30.0, "frame_count": 120, "preview": False},
+        "source": {"problem_id": "R8"},
+    })
+    with path.open("rb") as stream:
+        parsed = tomllib.load(stream)
+    assert parsed["story"] == {
+        "fps": 30.0, "frame_count": 120, "preview": False
+    }
+    assert parsed["source"]["problem_id"] == "R8"
+    assert not path.with_name(path.name + ".tmp").exists()
 
 
 def test_render_story_frames_blends_caches_and_resumes(tmp_path, monkeypatch):

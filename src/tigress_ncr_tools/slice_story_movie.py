@@ -44,7 +44,7 @@ REQUIRED_FIELD_GROUPS = (
     ("xHI", "specific_scalar_2"),
     ("xH2", "specific_scalar_3"),
 )
-SIDE_FIELD_GROUPS = REQUIRED_FIELD_GROUPS + (
+FINAL_SIDE_FIELD_GROUPS = (
     ("cell_centered_B",),
     ("rad_energy_density_PE",),
     ("rad_energy_density_PH",),
@@ -77,17 +77,20 @@ def _missing_field_groups(names, groups):
     return ["/".join(group) for group in groups if not names.intersection(group)]
 
 
-def slice_preflight_report(records):
+def slice_preflight_report(records, stop_index=None):
     """Return a JSON-serializable capability report for indexed slices."""
     if not records:
         raise ValueError("preflight requires at least one slice record")
+    stop_index = len(records) - 1 if stop_index is None else stop_index
+    if not 0 <= stop_index < len(records):
+        raise ValueError("stop_index lies outside the slice series")
     issues = []
     plane_intersections = {}
     plane_unions = {}
     for plane in ("x3", "x2"):
         field_sets = []
-        groups = REQUIRED_FIELD_GROUPS if plane == "x3" else SIDE_FIELD_GROUPS
-        for record in records:
+        groups = REQUIRED_FIELD_GROUPS
+        for record in records[:stop_index + 1]:
             names = record.get("field_names", {}).get(plane)
             if names is None:
                 issues.append(
@@ -108,12 +111,21 @@ def slice_preflight_report(records):
         else:
             plane_intersections[plane] = []
             plane_unions[plane] = []
+    final_names = records[stop_index].get("field_names", {}).get("x2", [])
+    final_missing = _missing_field_groups(final_names, FINAL_SIDE_FIELD_GROUPS)
+    if final_missing:
+        issues.append(
+            f"final output {records[stop_index].get('num')} plane x2 is missing "
+            + ", ".join(final_missing)
+        )
     return {
         "frame_count": len(records),
         "first_time": float(records[0]["time"]),
         "last_time": float(records[-1]["time"]),
         "first_num": records[0].get("num"),
         "last_num": records[-1].get("num"),
+        "validated_stop_index": stop_index,
+        "validated_stop_num": records[stop_index].get("num"),
         "plane_field_intersection": plane_intersections,
         "plane_field_union": plane_unions,
         "issues": issues,
@@ -121,9 +133,9 @@ def slice_preflight_report(records):
     }
 
 
-def require_slice_story_capabilities(records):
+def require_slice_story_capabilities(records, stop_index=None):
     """Raise one compact error if required slice fields or planes are absent."""
-    report = slice_preflight_report(records)
+    report = slice_preflight_report(records, stop_index=stop_index)
     if report["issues"]:
         details = "\n  ".join(report["issues"][:12])
         suffix = (
@@ -133,6 +145,35 @@ def require_slice_story_capabilities(records):
         )
         raise ValueError(f"slice-story preflight failed:\n  {details}{suffix}")
     return report
+
+
+def _toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    raise TypeError(f"unsupported resolved-config value {value!r}")
+
+
+def write_resolved_config(path, sections):
+    """Atomically write simple resolved settings as valid TOML."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for section, values in sections.items():
+        lines.append(f"[{section}]")
+        for key, value in values.items():
+            if value is not None:
+                lines.append(f"{key} = {_toml_value(value)}")
+        lines.append("")
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text("\n".join(lines), encoding="utf-8")
+    temporary.replace(path)
+    return path
 
 
 def volume_preflight_report(run_dir, problem_id, num, time_tolerance=0.01):
@@ -460,7 +501,10 @@ def main(argv=None):
         slice_id=args.slice_id,
         time_tolerance=args.time_tolerance,
     )
-    report = slice_preflight_report(records)
+    try:
+        report = slice_preflight_report(records, stop_index=args.stop_index)
+    except ValueError as error:
+        parser.error(str(error))
     if args.preflight:
         if not args.no_volume:
             last_index = len(records) - 1
@@ -488,7 +532,7 @@ def main(argv=None):
                 }
         print(json.dumps(report, indent=2))
         return report
-    require_slice_story_capabilities(records)
+    require_slice_story_capabilities(records, stop_index=args.stop_index)
     if args.volume_max_gib <= 0.0:
         parser.error("--volume-max-gib must be positive")
     if args.volume_opacity_scale <= 0.0:
@@ -526,6 +570,54 @@ def main(argv=None):
     output_dir = args.output_dir or args.run_dir / "movie_slice_story"
     output_dir.mkdir(parents=True, exist_ok=True)
     write_frame_manifest(output_dir / "frame_manifest.csv", requests)
+    resolved_stop_index = (
+        len(records) - 1 if args.stop_index is None else args.stop_index
+    )
+    resolved_freeze_index = (
+        (args.start_index + resolved_stop_index) // 2
+        if args.freeze_index is None
+        else args.freeze_index
+    )
+    write_resolved_config(output_dir / "resolved_config.toml", {
+        "source": {
+            "run_dir": str(args.run_dir.expanduser().resolve()),
+            "problem_id": args.problem_id,
+            "slice_id": args.slice_id,
+            "time_tolerance": args.time_tolerance,
+        },
+        "story": {
+            "fps": fps,
+            "frame_count": len(requests),
+            "start_index": args.start_index,
+            "freeze_index": resolved_freeze_index,
+            "stop_index": resolved_stop_index,
+            "duration_scale": duration_scale,
+        },
+        "durations_seconds": {
+            item.name: getattr(durations, item.name)
+            for item in fields(durations)
+        },
+        "canvas": {"width": width, "height": height},
+        "volume": {
+            "enabled": not args.no_volume,
+            "stride": volume_stride,
+            "max_gib": args.volume_max_gib,
+            "opacity_scale": args.volume_opacity_scale,
+        },
+        "render": {
+            "particles": not args.no_particles,
+            "start_frame": args.start_frame,
+            "stop_frame": args.stop_frame,
+            "overwrite": args.overwrite,
+        },
+        "movie": {
+            "enabled": args.movie,
+            "codec": args.codec,
+            "crf": args.crf,
+            "qscale": args.qscale,
+            "bitrate": args.bitrate,
+        },
+    })
     result = render_story_frames(
         requests,
         args.run_dir,
