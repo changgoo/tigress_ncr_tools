@@ -18,6 +18,17 @@ to Athena's `python/summary_plot.py` and related analysis scripts.
 check-suite /anvil/scratch/x-ckim5/TIGRESS-NCR
 plot-suite-hst /anvil/scratch/x-ckim5/TIGRESS-NCR
 
+# SFR-colored whole-domain kinetic, thermal, and Alfvén speed evolution.
+plot-suite-hst-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite
+
+# Shear-aware theta0 spectra of delta=Sigma/<Sigma>-1.
+plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
+
+# Rank 32 models by <SFR10> over t=200--600 and render 4x8 theta0 movies.
+plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
+plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite \
+  --map hydrogen-phases --movie
+
 # PBS Professional (for example, NASA Athena) is detected automatically.
 check-suite /nobackup/$USER/TIGRESS-NCR
 plot-suite-hst /nobackup/$USER/TIGRESS-NCR
@@ -36,6 +47,27 @@ generated batch scripts or simulation outputs rather than a fixed model-name
 pattern. Use `--scheduler` or `--model-glob` to override auto-detection.
 `plot-suite-hst` writes `hst_summary.png` and
 `hst_sfr_grid.png` in the suite directory unless `--output-dir` is supplied.
+`plot-suite-hst-evolution` reads each model's primary and `whole.hst`
+histories and writes `velocity_dispersions.png` plus an exact
+`model_sfr_colors.csv` key beneath `SUITE/hst_evolution/`. The seven panels are
+`sqrt(2*x1KE/mass)`, `sqrt(2*x2dke/mass)` (background shear removed),
+`sqrt(2*x3KE/mass)`, `sqrt(P/mass)`, and `sqrt(2*xNME/mass)` for all three
+magnetic components. Model color is a logarithmically normalized `plasma`
+map of mean `sfr10` over `t=200--600`. Use `--cmap`, `--color-scale`, `--yscale`,
+`--start`, and `--stop` to change the presentation or time interval.
+
+`plot-suite-evolution` writes the ranked 4x8 total-gas surface-density frames,
+`model_order.csv`, and (with `--movie`) an MP4 beneath
+`SUITE/surface_density_evolution_theta0/`. Use `--map hydrogen-phases` for a
+fixed-stretch pseudocolor movie beneath `SUITE/hydrogen_phase_evolution_theta0/`:
+red is molecular hydrogen (`2H2`), green is atomic hydrogen (`HI`), and blue
+is ionized hydrogen (`HII`). All channels count hydrogen nuclei and share one
+physical surface-density stretch across every panel and time. The default
+phase settings are `--phase-scale 25 --asinh-q 10 --hi-green-scale 0.65`.
+The default evolution is outputs 0--600 inclusive, ordered from the highest
+time-averaged `sfr10` at top left to the lowest at bottom right. `--start`,
+`--stop`, and `--stride` select a subset, while `--sfr-start` and `--sfr-stop`
+change the ranking interval.
 `plot-suite-projections` reads only `*_late/proj2d/thetaANGLE` and aligns the
 runs by stored physical time, independent of snapshot number. Restart-overlap
 times are deduplicated before matching. By default it writes
@@ -55,11 +87,67 @@ With `--movie`, the command uses the same ffmpeg workflow and defaults as
 `libx264` and falls back to `mpeg4`; `--movie-path`, `--codec`, `--crf`,
 `--qscale`, and `--bitrate` provide the same controls.
 
+## Suite density power spectra
+
+`plot-suite-density-spectrum` analyzes the 32-model theta0 sequence using
+`delta = Sigma/<Sigma> - 1`. It first remaps each map to periodic shearing
+coordinates, then assigns each Fourier mode its instantaneous physical
+wavenumber with `kx = kx0 + q*Omega*t_remap*ky`. Runtime `problem/qshear` and
+`problem/Omega` batch-script overrides take precedence over the athinput
+template values.
+
+The mathematical definition, discrete normalization, shear-coordinate
+derivation, and archive-field inventory are documented in
+[`docs/density_power_spectrum.md`](docs/density_power_spectrum.md).
+
+The default output directory is `SUITE/density_power_spectrum_theta0/`. It
+contains the complete `P_delta(t,k)` archive, a `t=200--600` mean-spectrum
+comparison, the exact model/SFR/color key, and—with `--movie`—the 601-frame
+spectrum evolution and MP4. Both dimensional `P_delta(k)` and variance per
+logarithmic interval, `k^2 P_delta(k)/(2 pi)`, are plotted. Model colors use the
+same logarithmically normalized `plasma` mapping as the history-evolution
+figure.
+
+```bash
+plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
+
+# Recompute the archive and every movie frame after source projections change.
+plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite \
+  --overwrite --movie
+```
+
+## Suite PRFM diagnostics
+
+`plot-suite-prfm` constructs two-phase midplane pressure and whole-column
+vertical weight directly from the raw z-profiles. Following the reference NCR
+analysis, two-phase gas is `phase7 + phase11 + phase12 + phase13`; pressures
+are averaged over `-10 <= z <= 10` pc and divided by the two-phase area
+fraction. External and self-gravitating weights are integrated inward from
+both vertical boundaries. The pressure components are turbulent, thermal,
+turbulent-field Maxwell stress, and mean-field Maxwell stress.
+
+The default `t=200--600` reduction interpolates `sfr10` and `sfr40` from each
+primary history. Feedback yields are formed snapshot by snapshot as
+`pressure / sfr40` and converted to `km/s` before temporal averaging. Model
+colors use the logarithmically normalized `plasma` mapping of mean `sfr10`.
+
+The output directory `SUITE/prfm_diagnostics/` contains the complete
+time-series CSV, a per-model summary with means and 16/50/84 percentiles, the
+model/color key, a three-panel pressure-weight-SFR diagnostic, and a `2x4`
+pressure-component/yield diagnostic.
+
+```bash
+plot-suite-prfm /tigress/changgoo/anvil/TIGRESS-NCR-suite
+
+# Re-read all z-profiles after simulation output changes.
+plot-suite-prfm /tigress/changgoo/anvil/TIGRESS-NCR-suite --overwrite
+```
 ## Surface-density statistics
 
 `surface-density-stats` reads the late-run `proj2d/theta0` maps in stored-time
-order, independent of snapshot number. It reads `qshear` and `Omega` from each
-run's `athinput*` and applies Athena's residual shear remap before the FFT,
+order, independent of snapshot number. It reads effective `qshear` and `Omega`
+from runtime batch overrides when present, falling back to `athinput*`, and
+applies Athena's residual shear remap before the FFT,
 including the physical shearing-wave correction
 `kx = kx0 + q*Omega*t_remap*ky`.
 

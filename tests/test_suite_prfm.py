@@ -1,0 +1,122 @@
+from pathlib import Path
+
+import matplotlib
+import numpy as np
+import pandas as pd
+
+matplotlib.use("Agg")
+
+from tigress_ncr_tools.plot_suite_hst_evolution import sfr_colormap
+from tigress_ncr_tools.plot_suite_prfm import (
+    PRESSURE_COMPONENTS,
+    YIELD_KMS_PER_POK_SFR,
+    ZPROF_PRESSURE_OVER_KB,
+    plot_prfm_balance,
+    plot_prfm_components,
+    reduce_zprof_snapshot,
+    summarize_prfm,
+)
+
+
+def _write_zprof(path, time, fields, rows):
+    header = "# Athena vertical profile at t={}\n".format(time)
+    header += ",".join(fields) + "\n"
+    body = "\n".join(",".join(str(value) for value in row) for row in rows)
+    path.write_text(header + body + "\n")
+
+
+def test_reduce_zprof_snapshot_matches_reference_stress_and_weight_definitions(tmp_path):
+    z = (-15.0, -5.0, 5.0, 15.0)
+    pressure_fields = (
+        "z", "A", "Ek3", "P", "PB1", "PB2", "PB3",
+        "dPB1", "dPB2", "dPB3",
+    )
+    phase_paths = []
+    for phase in (7, 11, 12, 13):
+        path = tmp_path / f"model.0001.phase{phase}.zprof"
+        rows = [
+            (height, 1.0, 3.0, 2.0, 10.0, 8.0, 2.0, 4.0, 3.0, 1.0)
+            for height in z
+        ]
+        _write_zprof(path, 250.0, pressure_fields, rows)
+        phase_paths.append(path)
+
+    whole = tmp_path / "model.0001.whole.zprof"
+    whole_rows = [
+        (-15.0, -1.0, -0.5),
+        (-5.0, -1.0, -0.5),
+        (5.0, 1.0, 0.5),
+        (15.0, 1.0, 0.5),
+    ]
+    _write_zprof(whole, 250.0, ("z", "dWext", "dWsg"), whole_rows)
+
+    result = reduce_zprof_snapshot(
+        phase_paths,
+        whole,
+        horizontal_area=100.0,
+        midplane_half_width=10.0,
+    )
+    unit = ZPROF_PRESSURE_OVER_KB
+    assert result["time"] == 250.0
+    assert result["area_two_phase_fraction"] == 0.04
+    assert result["pressure_turbulent"] == 6.0 * unit
+    assert result["pressure_thermal"] == 2.0 * unit
+    assert result["pressure_magnetic_turbulent"] == 6.0 * unit
+    assert result["pressure_magnetic_mean"] == 10.0 * unit
+    assert result["pressure_total"] == 24.0 * unit
+    assert result["weight_external"] == 0.2 * unit
+    assert result["weight_self_gravity"] == 0.1 * unit
+    np.testing.assert_allclose(result["weight_total"], 0.3 * unit)
+
+
+def _time_series():
+    rows = []
+    for model, scale in (("high", 2.0), ("low", 1.0)):
+        for time, factor in ((200.0, 0.8), (400.0, 1.0), (600.0, 1.2)):
+            row = {
+                "model": model,
+                "time": time,
+                "sfr10": scale * factor * 1.0e-3,
+                "sfr40": scale * factor * 1.2e-3,
+                "pressure_turbulent": scale * factor * 1000.0,
+                "pressure_thermal": scale * factor * 800.0,
+                "pressure_magnetic_turbulent": scale * factor * 500.0,
+                "pressure_magnetic_mean": scale * factor * 700.0,
+                "weight_external": scale * factor * 2200.0,
+                "weight_self_gravity": scale * factor * 800.0,
+            }
+            row["pressure_total"] = sum(
+                row[field] for field, _, _ in PRESSURE_COMPONENTS
+            )
+            row["weight_total"] = (
+                row["weight_external"] + row["weight_self_gravity"]
+            )
+            row["pressure_weight_ratio"] = (
+                row["pressure_total"] / row["weight_total"]
+            )
+            for pressure, _, _ in PRESSURE_COMPONENTS:
+                suffix = pressure.removeprefix("pressure_")
+                row[f"yield_{suffix}"] = (
+                    row[pressure] / row["sfr40"] * YIELD_KMS_PER_POK_SFR
+                )
+            row["yield_total"] = (
+                row["pressure_total"] / row["sfr40"] * YIELD_KMS_PER_POK_SFR
+            )
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_summary_and_prfm_figures_include_all_relations(tmp_path):
+    ranked = [(Path("high"), 2.0e-3), (Path("low"), 1.0e-3)]
+    summary = summarize_prfm(_time_series(), ranked)
+    assert summary["model"].tolist() == ["high", "low"]
+    assert np.all(summary["samples"] == 3)
+    assert summary.loc[0, "pressure_total_mean"] == 6000.0
+
+    cmap, norm = sfr_colormap([2.0e-3, 1.0e-3], "plasma", "log")
+    balance = tmp_path / "balance.png"
+    components = tmp_path / "components.png"
+    plot_prfm_balance(summary, balance, cmap=cmap, norm=norm, dpi=50)
+    plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=50)
+    assert balance.stat().st_size > 0
+    assert components.stat().st_size > 0

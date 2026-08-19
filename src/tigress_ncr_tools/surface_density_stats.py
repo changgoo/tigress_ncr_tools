@@ -23,6 +23,7 @@ DEFAULT_S_RANGE = (-6.0, 4.0)
 DEFAULT_PDF_BINS = 100
 DEFAULT_K_BINS = 40
 STATISTICS_NAME = "surface_density_statistics.npz"
+NUMBER_PATTERN = r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][+\-]?\d+)?"
 
 
 def read_athinput_section(path, section="problem"):
@@ -48,18 +49,20 @@ def read_athinput_section(path, section="problem"):
     return values
 
 
-def read_shear_parameters(model):
-    """Read ``qshear`` and ``Omega`` from a model's athinput file."""
-    paths = sorted(Path(model).glob("athinput*"))
-    if not paths:
-        raise FileNotFoundError(f"no athinput* file found in {model}")
-    found = []
-    for path in paths:
-        values = read_athinput_section(path)
-        if "qshear" in values and "Omega" in values:
-            found.append((path, values["qshear"], values["Omega"]))
-    if not found:
-        raise KeyError(f"qshear and Omega were not found under <problem> in {model}")
+def _batch_problem_parameters(path):
+    """Return numeric ``problem/name=value`` overrides from a batch script."""
+    text = Path(path).read_text(errors="replace")
+    pattern = re.compile(
+        rf"(?:^|\s)problem/([A-Za-z_][A-Za-z0-9_]*)=({NUMBER_PATTERN})(?=\s|$)"
+    )
+    return {
+        match.group(1): float(match.group(2).replace("D", "E").replace("d", "e"))
+        for match in pattern.finditer(text)
+    }
+
+
+def _consistent_shear_parameters(found, model):
+    """Validate parameter sources and return the first consistent tuple."""
     reference = found[0][1:]
     inconsistent = [item for item in found[1:] if not np.allclose(item[1:], reference)]
     if inconsistent:
@@ -69,6 +72,33 @@ def read_shear_parameters(model):
         )
         raise ValueError(f"inconsistent shear parameters in {model}: {details}")
     return found[0]
+
+
+def read_shear_parameters(model):
+    """Read effective ``qshear`` and ``Omega``, honoring runtime overrides."""
+    model = Path(model)
+    scripts = sorted(model.glob("*.slurm")) + sorted(model.glob("*.pbs"))
+    overridden = []
+    for path in scripts:
+        values = _batch_problem_parameters(path)
+        if "qshear" in values and "Omega" in values:
+            overridden.append((path, values["qshear"], values["Omega"]))
+    if overridden:
+        return _consistent_shear_parameters(overridden, model)
+
+    paths = sorted(model.glob("athinput*"))
+    if not paths:
+        raise FileNotFoundError(f"no batch override or athinput* found in {model}")
+    found = []
+    for path in paths:
+        values = read_athinput_section(path)
+        if "qshear" in values and "Omega" in values:
+            found.append((path, values["qshear"], values["Omega"]))
+    if not found:
+        raise KeyError(
+            f"qshear and Omega were not found in runtime overrides or <problem> in {model}"
+        )
+    return _consistent_shear_parameters(found, model)
 
 
 def residual_shear(time, qshear, omega, lx, ly):

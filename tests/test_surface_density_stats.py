@@ -1,5 +1,6 @@
 import matplotlib
 import numpy as np
+import pytest
 
 matplotlib.use("Agg")
 
@@ -29,6 +30,22 @@ def test_read_shear_parameters_from_problem_section(tmp_path):
     assert path.name == "athinput.test"
     assert qshear == 1.0
     assert omega == 0.028
+
+
+def test_runtime_shear_overrides_take_precedence(tmp_path):
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "athinput.test").write_text(
+        "<problem>\nqshear = 1.0\nOmega = 0.028\n"
+    )
+    script = model / "run.slurm"
+    script.write_text(
+        "srun athena problem/qshear=1.0916 problem/Omega=3.16103e-2\n"
+    )
+    path, qshear, omega = read_shear_parameters(model)
+    assert path == script
+    assert qshear == pytest.approx(1.0916)
+    assert omega == pytest.approx(0.0316103)
 
 
 def test_fourier_remap_recovers_periodic_shearing_wave():
