@@ -136,12 +136,17 @@ time-series CSV, a per-model summary with means and 16/50/84 percentiles, the
 model/color key, a three-panel pressure-weight-SFR diagnostic, and a `2x4`
 pressure-component/yield diagnostic.
 
+The physical definitions, discrete reduction equations, unit conversions,
+output schema, and interpretation are documented in
+[`docs/prfm_analysis.md`](docs/prfm_analysis.md).
+
 ```bash
 plot-suite-prfm /tigress/changgoo/anvil/TIGRESS-NCR-suite
 
 # Re-read all z-profiles after simulation output changes.
 plot-suite-prfm /tigress/changgoo/anvil/TIGRESS-NCR-suite --overwrite
 ```
+
 ## Surface-density statistics
 
 `surface-density-stats` reads the late-run `proj2d/theta0` maps in stored-time
