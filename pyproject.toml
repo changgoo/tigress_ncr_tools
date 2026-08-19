@@ -23,6 +23,7 @@ plot-suite-evolution = "tigress_ncr_tools.plot_suite_evolution:main"
 plot-suite-density-spectrum = "tigress_ncr_tools.plot_suite_density_spectrum:main"
 plot-suite-prfm = "tigress_ncr_tools.plot_suite_prfm:main"
 plot-suite-projections = "tigress_ncr_tools.plot_suite_projections:main"
+plot-suite-xz = "tigress_ncr_tools.plot_suite_xz:main"
 surface-density-stats = "tigress_ncr_tools.surface_density_stats:main"
 
 [tool.setuptools.packages.find]

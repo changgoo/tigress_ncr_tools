@@ -71,13 +71,44 @@ def _bin_arrays(origin, spacing, n, is_log):
     return edges, centers, edges_lin, centers_lin
 
 
-def read_pdf2d(path):
+def read_pdf2d_metadata(path):
+    """Read PDF2D identifiers and time without scanning scalar arrays."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+
+    with open(path, "rb") as fp:
+        header_lines = []
+        line = read_vtk_magic(fp, path)
+        header_lines.append(line.rstrip())
+        meta_line = read_ascii_line(fp).rstrip()
+        header_lines.append(meta_line)
+
+    match = _HDR_RE.match(meta_line)
+    if not match:
+        raise ValueError(
+            f"{path}: cannot parse PDF2D metadata line: {meta_line!r}"
+        )
+    return {
+        "id": match.group("id"),
+        "time": float(match.group("time")),
+        "binx_name": match.group("binx").strip(),
+        "biny_name": match.group("biny").strip(),
+        "binx_log": int(match.group("lx")),
+        "biny_log": int(match.group("ly")),
+        "header_lines": header_lines,
+    }
+
+
+def read_pdf2d(path, fields=None):
     """Read one pdf2d file.
 
     Parameters
     ----------
     path : str
         Path to the .pdf2d file.
+    fields : str or iterable of str, optional
+        Scalar weights to load. Unselected binary arrays are skipped without
+        materializing them. The default reads every weight.
 
     Returns
     -------
@@ -96,6 +127,13 @@ def read_pdf2d(path):
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
+
+    if fields is None:
+        requested = None
+    elif isinstance(fields, str):
+        requested = {fields}
+    else:
+        requested = set(fields)
 
     with open(path, "rb") as fp:
         header_lines = []
@@ -172,18 +210,27 @@ def read_pdf2d(path):
                     f"{path}: expected LOOKUP_TABLE after SCALARS {name}, "
                     f"got {lookup_ln!r}"
                 )
-            arr = read_vtk_scalar_2d(fp, path, name, Nx, Ny)
             weight_names.append(name)
-            weights[name] = arr
+            if requested is None or name in requested:
+                weights[name] = read_vtk_scalar_2d(fp, path, name, Nx, Ny)
+            else:
+                fp.seek(Nx * Ny * 4, os.SEEK_CUR)
 
         out["weight_names"] = weight_names
         out["weights"] = weights
         out["header_lines"] = header_lines
 
+    if requested is not None:
+        missing = sorted(requested - set(weight_names))
+        if missing:
+            raise KeyError(
+                f"{path}: requested PDF2D weights are missing: {', '.join(missing)}"
+            )
+
     return out
 
 
-def read_pdf2d_series(pattern):
+def read_pdf2d_series(pattern, fields=None):
     """Read every file matching a glob pattern, return list of dicts sorted
     by filename. Convenience wrapper around read_pdf2d.
 
@@ -192,7 +239,7 @@ def read_pdf2d_series(pattern):
         times = [f["time"] for f in frames]
     """
     paths = sorted(glob.glob(pattern))
-    return [read_pdf2d(p) for p in paths]
+    return [read_pdf2d(p, fields=fields) for p in paths]
 
 def print_metadata(d):
     print(f"id={d['id']!r}  time={d['time']:g}")

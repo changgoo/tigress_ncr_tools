@@ -29,6 +29,9 @@ plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite \
   --map hydrogen-phases --movie
 
+# SFR-ranked 4x8 XZ projections at t=0,100,...,600.
+plot-suite-xz /tigress/changgoo/anvil/TIGRESS-NCR-suite
+
 # PBS Professional (for example, NASA Athena) is detected automatically.
 check-suite /nobackup/$USER/TIGRESS-NCR
 plot-suite-hst /nobackup/$USER/TIGRESS-NCR
@@ -68,6 +71,19 @@ The default evolution is outputs 0--600 inclusive, ordered from the highest
 time-averaged `sfr10` at top left to the lowest at bottom right. `--start`,
 `--stop`, and `--stride` select a subset, while `--sfr-start` and `--sfr-stop`
 change the ranking interval.
+
+`plot-suite-xz` reads the `pdf2d/x1-x3` projection integrated along the
+azimuthal direction, converts `nH` to gas surface density using the projected
+cell area, and preserves the physical 1:4 X-to-Z aspect ratio in every panel.
+Malformed native XZ products are automatically reconstructed by summing the
+density in the matching archived VTK snapshot along y. It uses the same SFR
+ranking and writes figures, `model_order.csv`, and panel-level source
+provenance in `xz_sources.csv` beneath
+`SUITE/surface_density_evolution_x1-x3/`. The default produces seven overview
+figures from `t=0` through 600 at intervals of 100. `--stride 1` requests every
+native time and `--movie` encodes the frames; a malformed native product can
+only be rebuilt when an archived VTK snapshot exists at that physical time.
+
 `plot-suite-projections` reads only `*_late/proj2d/thetaANGLE` and aligns the
 runs by stored physical time, independent of snapshot number. Restart-overlap
 times are deduplicated before matching. By default it writes
