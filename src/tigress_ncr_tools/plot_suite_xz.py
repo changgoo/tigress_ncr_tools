@@ -354,9 +354,13 @@ def load_xz_maps_with_vtk_fallback(
     target_time,
     *,
     reference_extent=None,
+    reference_shape=None,
+    corrupt_policy="vtk",
     tolerance=0.05,
 ):
-    """Load native XZ maps, rebuilding malformed products from VTK."""
+    """Load native XZ maps, rebuilding or blanking malformed products."""
+    if corrupt_policy not in {"vtk", "blank"}:
+        raise ValueError("corrupt_policy must be 'vtk' or 'blank'")
     if len(paths) != len(vtk_indices):
         raise ValueError("XZ paths and VTK indices must have equal lengths")
     maps = []
@@ -365,11 +369,12 @@ def load_xz_maps_with_vtk_fallback(
     for path, vtk_index in zip(paths, vtk_indices):
         replaced = ""
         reason = ""
+        pdf = None
         try:
             pdf = read_pdf2d(path, fields="nH")
             data, extent = xz_surface_density_map(pdf)
-            if not np.any(np.isfinite(data) & (data > 0.0)):
-                raise ValueError("native XZ map has no positive finite data")
+            if not np.all(np.isfinite(data) & (data > 0.0)):
+                raise ValueError("native XZ map contains non-positive data")
             if common_extent is not None and not np.allclose(extent, common_extent):
                 raise ValueError(
                     f"native XZ extent {extent} differs from {common_extent}"
@@ -378,21 +383,38 @@ def load_xz_maps_with_vtk_fallback(
             source_path = path
             source_time = float(pdf["time"])
         except (OSError, ValueError, KeyError, EOFError) as error:
-            snapshot, source_time = nearest_vtk_snapshot(
-                vtk_index, target_time, tolerance=tolerance
-            )
-            data, extent = xz_surface_density_from_vtk(snapshot)
-            source = "vtk-reconstructed"
-            source_path = snapshot
-            replaced = str(path)
+            if corrupt_policy == "blank":
+                shape = reference_shape or (
+                    next((item.shape for item in maps if item is not None), None)
+                )
+                if common_extent is None or shape is None:
+                    data = extent = None
+                else:
+                    data = np.full(shape, np.nan)
+                    extent = common_extent
+                source = "blank-corrupt-pdf2d"
+                source_path = path
+                source_time = float(
+                    pdf["time"] if pdf is not None
+                    else read_pdf2d_metadata(path)["time"]
+                )
+            else:
+                snapshot, source_time = nearest_vtk_snapshot(
+                    vtk_index, target_time, tolerance=tolerance
+                )
+                data, extent = xz_surface_density_from_vtk(snapshot)
+                source = "vtk-reconstructed"
+                source_path = snapshot
+                replaced = str(path)
             reason = str(error)
-        if common_extent is None:
+        if data is not None and common_extent is None:
             common_extent = extent
-        elif not np.allclose(extent, common_extent):
+        elif data is not None and not np.allclose(extent, common_extent):
             raise ValueError(
                 f"XZ extent at {source_path} differs from {common_extent}"
             )
-        if maps and data.shape != maps[0].shape:
+        valid = next((item for item in maps if item is not None), None)
+        if data is not None and valid is not None and data.shape != valid.shape:
             raise ValueError(f"XZ shape differs at {source_path}")
         maps.append(data)
         sources.append({
@@ -402,6 +424,18 @@ def load_xz_maps_with_vtk_fallback(
             "replaced_pdf2d": replaced,
             "reason": reason,
         })
+
+    if any(data is None for data in maps):
+        valid = next((data for data in maps if data is not None), None)
+        shape = reference_shape or (valid.shape if valid is not None else None)
+        if common_extent is None or shape is None:
+            raise ValueError(
+                "cannot blank corrupt XZ maps without one valid reference map"
+            )
+        maps = [
+            np.full(shape, np.nan) if data is None else data
+            for data in maps
+        ]
     return maps, common_extent, sources
 
 
@@ -556,7 +590,7 @@ def render_xz_surface_density(
     output_dir=None,
     start=0,
     stop=600,
-    stride=100,
+    stride=1,
     sfr_bounds=DEFAULT_SFR_RANGE,
     history_samples=10000,
     nrows=4,
@@ -567,6 +601,7 @@ def render_xz_surface_density(
     dpi=150,
     time_tolerance=0.05,
     search_radius=32,
+    corrupt_policy="blank",
     overwrite=False,
     movie=False,
     fps=10.0,
@@ -596,14 +631,18 @@ def render_xz_surface_density(
         xz_number_index(model, pdf_id)
         for model, _ in ranked
     ]
-    vtk_indices = [
-        vtk_snapshot_index(model)
-        for model, _ in ranked
-    ]
+    if corrupt_policy == "vtk":
+        vtk_indices = [
+            vtk_snapshot_index(model)
+            for model, _ in ranked
+        ]
+    else:
+        vtk_indices = [None] * len(ranked)
     guess_offsets = [0] * len(ranked)
 
     fig = images = time_text = None
     reference_extent = None
+    reference_shape = None
     written = []
     provenance = []
     source_table = output_dir / "xz_sources.csv"
@@ -647,6 +686,8 @@ def render_xz_surface_density(
                 vtk_indices,
                 target_time,
                 reference_extent=reference_extent,
+                reference_shape=reference_shape,
+                corrupt_policy=corrupt_policy,
                 tolerance=time_tolerance,
             )
             for (model, _), source in zip(ranked, frame_sources):
@@ -658,6 +699,7 @@ def render_xz_surface_density(
             time = float(np.mean(times))
             if fig is None:
                 reference_extent = extent
+                reference_shape = maps[0].shape
                 fig, images, time_text = create_xz_grid_figure(
                     ranked,
                     maps,
@@ -676,14 +718,15 @@ def render_xz_surface_density(
 
             fig.savefig(output, dpi=dpi, facecolor="white")
             written.append(output)
-            write_xz_sources(provenance, source_table)
-            fallback_count = sum(
-                source["source"] == "vtk-reconstructed"
+            corrupt_count = sum(
+                source["source"] != "pdf2d"
                 for source in frame_sources
             )
-            print(f"  VTK fallback panels: {fallback_count}", flush=True)
+            print(f"  Corrupt PDF2D panels: {corrupt_count}", flush=True)
             print(f"Wrote {output}", flush=True)
     finally:
+        if provenance:
+            write_xz_sources(provenance, source_table)
         if fig is not None:
             plt.close(fig)
 
@@ -707,7 +750,7 @@ def main(argv=None):
     parser.add_argument(
         "--stride",
         type=int,
-        default=100,
+        default=1,
         help="spacing between target times; use 1 for full-cadence evolution",
     )
     parser.add_argument("--sfr-start", type=float, default=DEFAULT_SFR_RANGE[0])
@@ -721,6 +764,12 @@ def main(argv=None):
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--time-tolerance", type=float, default=0.05)
     parser.add_argument("--search-radius", type=int, default=32)
+    parser.add_argument(
+        "--corrupt-policy",
+        choices=("blank", "vtk"),
+        default="blank",
+        help="blank corrupt PDF2D panels or reconstruct matching VTK epochs",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--movie", action="store_true")
     parser.add_argument("--fps", type=float, default=10.0)
@@ -763,6 +812,7 @@ def main(argv=None):
         dpi=args.dpi,
         time_tolerance=args.time_tolerance,
         search_radius=args.search_radius,
+        corrupt_policy=args.corrupt_policy,
         overwrite=args.overwrite,
         movie=args.movie,
         fps=args.fps,

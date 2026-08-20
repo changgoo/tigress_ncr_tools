@@ -147,6 +147,38 @@ def test_vtk_xz_reconstruction_and_native_fallback(tmp_path, monkeypatch):
     assert sources[0]["source"] == "vtk-reconstructed"
     assert sources[0]["replaced_pdf2d"] == "malformed.pdf2d"
 
+    blank_maps, blank_extent, blank_sources = load_xz_maps_with_vtk_fallback(
+        [Path("malformed.pdf2d")],
+        [None],
+        100.0,
+        reference_extent=extent,
+        reference_shape=data.shape,
+        corrupt_policy="blank",
+    )
+    assert np.isnan(blank_maps[0]).all()
+    assert blank_extent == extent
+    assert blank_sources[0]["source"] == "blank-corrupt-pdf2d"
+    assert blank_sources[0]["path"] == "malformed.pdf2d"
+    assert blank_sources[0]["replaced_pdf2d"] == ""
+
+    valid = dict(
+        malformed,
+        weights={"nH": np.ones((1, 2))},
+    )
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_xz.read_pdf2d",
+        lambda path, fields=None: (
+            malformed if "malformed" in str(path) else valid
+        ),
+    )
+    deferred, deferred_extent, _ = load_xz_maps_with_vtk_fallback(
+        [Path("malformed.pdf2d"), Path("valid.pdf2d")],
+        [None, None],
+        100.0,
+        corrupt_policy="blank",
+    )
+    assert np.isnan(deferred[0]).all()
+
 
 def test_xz_grid_preserves_physical_aspect_and_updates():
     ranked = [

@@ -29,8 +29,8 @@ plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite \
   --map hydrogen-phases --movie
 
-# SFR-ranked 4x8 XZ projections at t=0,100,...,600.
-plot-suite-xz /tigress/changgoo/anvil/TIGRESS-NCR-suite
+# SFR-ranked 4x8 XZ projections and movie at 1-Myr cadence.
+plot-suite-xz /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie --overwrite
 
 # PBS Professional (for example, NASA Athena) is detected automatically.
 check-suite /nobackup/$USER/TIGRESS-NCR
@@ -75,14 +75,15 @@ change the ranking interval.
 `plot-suite-xz` reads the `pdf2d/x1-x3` projection integrated along the
 azimuthal direction, converts `nH` to gas surface density using the projected
 cell area, and preserves the physical 1:4 X-to-Z aspect ratio in every panel.
-Malformed native XZ products are automatically reconstructed by summing the
-density in the matching archived VTK snapshot along y. It uses the same SFR
-ranking and writes figures, `model_order.csv`, and panel-level source
-provenance in `xz_sources.csv` beneath
-`SUITE/surface_density_evolution_x1-x3/`. The default produces seven overview
-figures from `t=0` through 600 at intervals of 100. `--stride 1` requests every
-native time and `--movie` encodes the frames; a malformed native product can
-only be rebuilt when an archived VTK snapshot exists at that physical time.
+It uses the same SFR ranking and writes figures, `model_order.csv`, and
+panel-level source provenance in `xz_sources.csv` beneath
+`SUITE/surface_density_evolution_x1-x3/`. The default cadence is 1 Myr from
+`t=0` through 600. Native files with zero data or invalid geometry produce a
+blank panel, recorded as `blank-corrupt-pdf2d`; no temporal substitution is
+performed. Use `--movie` to encode all available frames, `--stride 100` for
+seven overview figures, or `--corrupt-policy vtk` to reconstruct a corrupt
+panel when an exact-time archived VTK snapshot exists.
+
 
 `plot-suite-projections` reads only `*_late/proj2d/thetaANGLE` and aligns the
 runs by stored physical time, independent of snapshot number. Restart-overlap
