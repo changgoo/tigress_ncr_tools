@@ -33,6 +33,16 @@ DEFAULT_TIME_SERIES_NAME = "prfm_time_series.csv"
 DEFAULT_SUMMARY_NAME = "prfm_model_summary.csv"
 DEFAULT_PROFILE_NAME = "prfm_vertical_profiles.csv"
 DEFAULT_CMAP = "plasma"
+PARAMETER_COLOR_SPECS = (
+    ("omega", "log", "viridis", r"$\Omega\ [{\rm Myr}^{-1}]$"),
+    (
+        "stellar_midplane_density",
+        "log",
+        "cividis",
+        r"$\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
+    ),
+    ("qshear", "linear", "magma", r"$q$"),
+)
 DEFAULT_TIME_RANGE = DEFAULT_SFR_RANGE
 DEFAULT_SFR_FIELD = "sfr40"
 DEFAULT_TOP_HALF_WIDTH = 10.0
@@ -69,6 +79,12 @@ PROFILE_FIELDS = (
     "pressure_magnetic_turbulent",
     "pressure_magnetic_mean",
     "pressure_total",
+    "total_gas_density",
+    "total_gas_pressure_turbulent",
+    "total_gas_pressure_thermal",
+    "total_gas_pressure_magnetic_turbulent",
+    "total_gas_pressure_magnetic_mean",
+    "total_gas_pressure_total",
 )
 SUMMARY_FIELDS = (
     "sfr10",
@@ -282,7 +298,21 @@ def reduce_zprof_snapshot(
         },
     }
 
-    weight_time, whole = _read_profile_columns(whole_path, ("z", "dWext", "dWsg"))
+    whole_fields = (
+        "z",
+        "d",
+        "Ek3",
+        "P",
+        "PB1",
+        "PB2",
+        "PB3",
+        "dPB1",
+        "dPB2",
+        "dPB3",
+        "dWext",
+        "dWsg",
+    )
+    weight_time, whole = _read_profile_columns(whole_path, whole_fields)
     if not np.isclose(weight_time, reference_time):
         raise ValueError(f"whole and phase profile times differ at {whole_path}")
     z_whole = whole["z"]
@@ -327,6 +357,15 @@ def reduce_zprof_snapshot(
         profile[f"pressure_{field}"] = value / float(horizontal_area) * conversion
     profile["pressure_total"] = sum(
         profile[f"pressure_{field}"] for field in profile_pressure
+    )
+    total_gas_pressure = _pressure_numerators(whole)
+    profile["total_gas_density"] = whole["d"] / float(horizontal_area)
+    for field, value in total_gas_pressure.items():
+        profile[f"total_gas_pressure_{field}"] = (
+            value / float(horizontal_area) * conversion
+        )
+    profile["total_gas_pressure_total"] = sum(
+        profile[f"total_gas_pressure_{field}"] for field in total_gas_pressure
     )
     return result, pd.DataFrame(profile)
 
@@ -752,32 +791,57 @@ def plot_prfm_components(
 
 
 def plot_prfm_vertical_profiles(
-    profile_summary, summary, output, *, cmap, norm, dpi=180
+    profile_summary,
+    summary,
+    output,
+    *,
+    cmap,
+    norm,
+    gas_selection="two_phase",
+    dpi=180,
 ):
-    """Plot suite-mean two-phase density and vertical stress profiles."""
+    """Plot suite-mean density and vertical stress profiles."""
+    if gas_selection == "two_phase":
+        prefix = ""
+        density_field = "density_two_phase"
+        density_label = r"$\langle n_{\rm H,2p}\rangle\ [{\rm cm}^{-3}]$"
+        total_label = r"$P_{\rm tot,2p}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$"
+        title = "Time-averaged two-phase vertical density and pressure profiles"
+    elif gas_selection == "total_gas":
+        prefix = "total_gas_"
+        density_field = "total_gas_density"
+        density_label = r"$\langle n_{\rm H}\rangle\ [{\rm cm}^{-3}]$"
+        total_label = r"$P_{\rm tot}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$"
+        title = "Time-averaged total-gas vertical density and pressure profiles"
+    else:
+        raise ValueError("gas_selection must be 'two_phase' or 'total_gas'")
     specifications = (
         (
-            "density_two_phase",
-            r"$\langle n_{\rm H,2p}\rangle\ [{\rm cm}^{-3}]$",
+            density_field,
+            density_label,
             "log",
         ),
         (
-            "pressure_turbulent",
+            f"{prefix}pressure_turbulent",
             r"$P_{\rm turb}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
             "symlog",
         ),
-        ("pressure_thermal", r"$P_{\rm th}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$", "symlog"),
         (
-            "pressure_magnetic_turbulent",
+            f"{prefix}pressure_thermal",
+            r"$P_{\rm th}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
+            "symlog",
+        ),
+        (
+            f"{prefix}pressure_magnetic_turbulent",
             r"$\Pi_{\delta B}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
             "symlog",
         ),
         (
-            "pressure_magnetic_mean",
+            f"{prefix}pressure_magnetic_mean",
             r"$\Pi_{\overline{B}}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
             "symlog",
         ),
-        ("pressure_total", r"$P_{\rm tot,2p}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$", "symlog"),
+        (f"{prefix}pressure_total", total_label, "symlog"),
     )
     colors = {
         row["model"]: cmap(norm(row["mean_sfr10_color"]))
@@ -809,10 +873,7 @@ def plot_prfm_vertical_profiles(
         r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
-    fig.suptitle(
-        "Time-averaged two-phase vertical density and pressure profiles",
-        fontsize=14,
-    )
+    fig.suptitle(title, fontsize=14)
     fig.subplots_adjust(
         left=0.085, right=0.985, bottom=0.17, top=0.91, wspace=0.28, hspace=0.20
     )
@@ -845,9 +906,13 @@ def render_suite_prfm(
     cache_ready = time_series_path.exists() and profile_path.exists()
     if cache_ready:
         cached_columns = pd.read_csv(time_series_path, nrows=0).columns
+        cached_profile_columns = pd.read_csv(profile_path, nrows=0).columns
         cache_ready = {"pressure_delta_total", "yield_delta_total"}.issubset(
             cached_columns
-        )
+        ) and {
+            "total_gas_density_mean",
+            "total_gas_pressure_total_mean",
+        }.issubset(cached_profile_columns)
     if cache_ready and not overwrite:
         print(f"Loading existing {time_series_path}", flush=True)
         time_series = pd.read_csv(time_series_path)
@@ -893,6 +958,7 @@ def render_suite_prfm(
     plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=dpi)
     delta_balance = output_dir / "prfm_delta_pressure_weight_relations.png"
     vertical = output_dir / "prfm_vertical_profiles.png"
+    vertical_total_gas = output_dir / "prfm_vertical_profiles_total_gas.png"
     plot_prfm_balance(
         summary,
         delta_balance,
@@ -906,22 +972,25 @@ def render_suite_prfm(
     plot_prfm_vertical_profiles(
         profile_summary, summary, vertical, cmap=cmap, norm=norm, dpi=dpi
     )
+    plot_prfm_vertical_profiles(
+        profile_summary,
+        summary,
+        vertical_total_gas,
+        cmap=cmap,
+        norm=norm,
+        gas_selection="total_gas",
+        dpi=dpi,
+    )
     print(f"Wrote {delta_balance}", flush=True)
     print(f"Wrote {vertical}", flush=True)
+    print(f"Wrote {vertical_total_gas}", flush=True)
     print(f"Wrote {balance}", flush=True)
     print(f"Wrote {components}", flush=True)
-    color_specs = (
-        ("omega", "log", r"$\Omega\ [{\rm Myr}^{-1}]$"),
-        (
-            "stellar_midplane_density",
-            "log",
-            r"$\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
-        ),
-        ("qshear", "linear", r"$q$"),
-    )
-    for field, scale, colorbar_label in color_specs:
+    for field, scale, parameter_cmap_name, colorbar_label in PARAMETER_COLOR_SPECS:
         values = summary[field].to_numpy(dtype=float)
-        parameter_cmap, parameter_norm = sfr_colormap(values, cmap_name, scale)
+        parameter_cmap, parameter_norm = sfr_colormap(
+            values, parameter_cmap_name, scale
+        )
         colored = summary.copy()
         colored["mean_sfr10_color"] = values
         suffix = f"_color_by_{field}"

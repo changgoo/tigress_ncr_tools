@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_hst_evolution import sfr_colormap
 from tigress_ncr_tools.plot_suite_prfm import (
+    PARAMETER_COLOR_SPECS,
     PRESSURE_COMPONENTS,
     YIELD_KMS_PER_POK_SFR,
     ZPROF_PRESSURE_OVER_KB,
@@ -67,14 +68,37 @@ def test_reduce_zprof_snapshot_matches_reference_stress_and_weight_definitions(
 
     whole = tmp_path / "model.0001.whole.zprof"
     whole_rows = [
-        (-25.0, -1.0, -0.5),
-        (-15.0, -1.0, -0.5),
-        (-5.0, -1.0, -0.5),
-        (5.0, 1.0, 0.5),
-        (15.0, 1.0, 0.5),
-        (25.0, 1.0, 0.5),
+        (
+            height,
+            20.0,
+            5.0,
+            6.0,
+            10.0,
+            8.0,
+            2.0,
+            4.0,
+            3.0,
+            1.0,
+            -1.0 if height < 0.0 else 1.0,
+            -0.5 if height < 0.0 else 0.5,
+        )
+        for height in z
     ]
-    _write_zprof(whole, 250.0, ("z", "dWext", "dWsg"), whole_rows)
+    whole_fields = (
+        "z",
+        "d",
+        "Ek3",
+        "P",
+        "PB1",
+        "PB2",
+        "PB3",
+        "dPB1",
+        "dPB2",
+        "dPB3",
+        "dWext",
+        "dWsg",
+    )
+    _write_zprof(whole, 250.0, whole_fields, whole_rows)
 
     result, profile = reduce_zprof_snapshot(
         phase_paths,
@@ -98,6 +122,8 @@ def test_reduce_zprof_snapshot_matches_reference_stress_and_weight_definitions(
     np.testing.assert_allclose(result["pressure_delta_total"], 1.0 * unit)
     np.testing.assert_allclose(profile["density_two_phase"], 0.16)
     np.testing.assert_allclose(profile["pressure_total"].max(), 0.96 * unit)
+    np.testing.assert_allclose(profile["total_gas_density"], 0.2)
+    np.testing.assert_allclose(profile["total_gas_pressure_total"], 0.32 * unit)
 
 
 def _time_series():
@@ -159,6 +185,12 @@ def _profile_summary():
         "pressure_magnetic_turbulent",
         "pressure_magnetic_mean",
         "pressure_total",
+        "total_gas_density",
+        "total_gas_pressure_turbulent",
+        "total_gas_pressure_thermal",
+        "total_gas_pressure_magnetic_turbulent",
+        "total_gas_pressure_magnetic_mean",
+        "total_gas_pressure_total",
     )
     for model, scale in (("high", 2.0), ("low", 1.0)):
         for z in (-100.0, 0.0, 100.0):
@@ -167,7 +199,7 @@ def _profile_summary():
                 value = (
                     scale
                     * np.exp(-abs(z) / 100.0)
-                    * (1.0 if field == "density_two_phase" else 1000.0)
+                    * (1.0 if "density" in field else 1000.0)
                 )
                 for statistic, factor in (
                     ("mean", 1.0),
@@ -197,6 +229,7 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     components = tmp_path / "components.png"
     delta = tmp_path / "delta.png"
     vertical = tmp_path / "vertical.png"
+    vertical_total_gas = tmp_path / "vertical_total_gas.png"
     plot_prfm_balance(summary, balance, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_balance(
@@ -211,7 +244,26 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     plot_prfm_vertical_profiles(
         _profile_summary(), summary, vertical, cmap=cmap, norm=norm, dpi=50
     )
+    plot_prfm_vertical_profiles(
+        _profile_summary(),
+        summary,
+        vertical_total_gas,
+        cmap=cmap,
+        norm=norm,
+        gas_selection="total_gas",
+        dpi=50,
+    )
     assert delta.stat().st_size > 0
     assert vertical.stat().st_size > 0
+    assert vertical_total_gas.stat().st_size > 0
     assert balance.stat().st_size > 0
     assert components.stat().st_size > 0
+
+
+def test_parameter_colormaps_are_distinct():
+    assert [field for field, _, _, _ in PARAMETER_COLOR_SPECS] == [
+        "omega",
+        "stellar_midplane_density",
+        "qshear",
+    ]
+    assert len({cmap for _, _, cmap, _ in PARAMETER_COLOR_SPECS}) == 3

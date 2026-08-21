@@ -421,17 +421,24 @@ For the profile figure, the two-phase extensive fields are divided by the
 full horizontal box area at each height:
 
 $$
-\langle n_{\rm H,2p}\rangle_{xy}(z)
-=\frac{d_{\rm 2p}(z)}{A_{\rm box}},
+\langle n_{\rm H,2p}\rangle_{xy}(z)=\frac{d_{\rm 2p}(z)}{A_{\rm box}},
 \qquad
-P_c(z)
-=C_P\frac{Q_c(z)}{A_{\rm box}}.
+P_c(z)=C_P\frac{Q_c(z)}{A_{\rm box}}.
 $$
 
 Unlike the conditional midplane scalar, these profiles include the two-phase
 covering fraction and are the horizontally averaged terms relevant to the
 vertical momentum equation. Each model curve is the snapshot mean over the
 selected interval; the faint envelope marks its 16th--84th percentiles.
+
+The total-gas profile uses the corresponding fields from `whole.zprof` with
+the same full-area normalization:
+
+$$
+\langle n_{\rm H}\rangle_{xy}(z)=\frac{d_{\rm whole}(z)}{A_{\rm box}},
+\qquad
+P_{c,{\rm whole}}(z)=C_P\frac{Q_{c,{\rm whole}}(z)}{A_{\rm box}}.
+$$
 
 ## Figures
 
@@ -463,13 +470,20 @@ negative because vertical tension can exceed horizontal magnetic pressure.
 figure with $\Delta P_{\rm tot,2p}$ in place of the midplane pressure.
 
 `prfm_vertical_profiles.png` contains the density, four component stresses,
-and total stress in a `2x3` layout.
+and total stress of two-phase gas in a `2x3` layout.
+
+`prfm_vertical_profiles_total_gas.png` repeats the layout using all gas from
+the whole-gas z-profiles.
 
 The default files above use the mean-SFR color mapping. Each scalar relation
 figure also has `_color_by_omega`, `_color_by_stellar_midplane_density`, and
 `_color_by_qshear` variants. Thus each alternate parameter produces a
 midplane balance figure, a pressure-drop balance figure, and a
 component/yield figure.
+
+The mean-SFR figures use `plasma`. The orbital-frequency, stellar-density,
+and shear variants use `viridis`, `cividis`, and `magma`, respectively, so
+their encodings remain visually distinct.
 
 ## Output files and columns
 
@@ -501,8 +515,10 @@ pressure divided by $k_B$. Yield columns are in ${\rm km\,s^{-1}}$.
 
 This table has one row per model and height. It stores `samples`, `z`, and the
 snapshot mean and 16th, 50th, and 84th percentiles for two-phase area
-fraction, density, the four pressure components, and total pressure. Density
-and pressure profiles use full-box horizontal-area normalization.
+fraction, density, the four pressure components, and total pressure. It also
+stores total-gas density and the four pressure components plus their sum,
+using the `total_gas_` prefix. All density and pressure profiles use full-box
+horizontal-area normalization.
 
 ### `prfm_model_summary.csv`
 
@@ -550,11 +566,11 @@ plot-suite-prfm SUITE --top-half-width 20 --overwrite
 plot-suite-prfm SUITE --output-dir /path/to/prfm_output
 ```
 
-The time-series and vertical-profile caches are reused only when both exist
-and the time series contains the pressure-drop columns. Use `--overwrite`
-whenever the source profiles, time interval, stride, midplane width, top-slab
-width, or reduction code changes. Cache reuse does not otherwise revalidate
-those settings.
+The time-series and vertical-profile caches are reused only when both exist,
+the time series contains the pressure-drop columns, and the profile cache
+contains the total-gas fields. Use `--overwrite` whenever the source
+profiles, time interval, stride, midplane width, top-slab width, or reduction
+code changes. Cache reuse does not otherwise revalidate those settings.
 
 ## Interpretation and limitations
 
@@ -567,6 +583,11 @@ those settings.
 - `pressure_total` excludes radiation, cosmic-ray, and hot-phase pressure.
 - The pressure-drop comparison retains the finite stress in slabs near
   $z=\pm z_b/2$; these reference slabs are not the domain boundaries.
+- Top-slab stress uses the midplane two-phase area normalization. Rare
+  snapshots with a very small midplane two-phase covering fraction can
+  therefore dominate a temporal mean of $\Delta P$; inspect the median and
+  the covering-fraction time series before interpreting such an outlier as a
+  sustained upper-layer stress.
 - Both midplane-pressure and pressure-drop balance figures are retained.
 - Snapshot summary means are not cadence-weighted, although the output cadence
   is expected to be nearly uniform. Model-color `sfr10` is time-weighted.

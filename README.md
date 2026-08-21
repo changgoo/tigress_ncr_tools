@@ -150,15 +150,16 @@ sum.
 The default `t=200--600` reduction interpolates `sfr10` and `sfr40` from each
 primary history. Feedback yields are formed snapshot by snapshot as
 `pressure / sfr40` and converted to `km/s` before temporal averaging.
-Figure sets use the sequential `plasma` map, colored in turn by mean `sfr10`,
-orbital frequency, stellar midplane density $\Sigma_*/(2H_*)$, and shear
-parameter $q$.
+The mean-`sfr10` figures use `plasma`. Alternate parameter figures use
+distinct sequential maps: `viridis` for orbital frequency, `cividis` for
+stellar midplane density $\Sigma_*/(2H_*)$, and `magma` for shear parameter
+$q$.
 
 The output directory `SUITE/prfm_diagnostics/` contains the complete
 time-series and vertical-profile CSV caches, a per-model summary with means
 and 16/50/84 percentiles, the model/color key, midplane and pressure-drop
-balance figures, a `2x4` pressure-component/yield figure, and a `2x3`
-vertical-profile figure.
+balance figures, a `2x4` pressure-component/yield figure, and separate `2x3`
+vertical-profile figures for two-phase and total gas.
 
 The physical definitions, discrete reduction equations, unit conversions,
 output schema, and interpretation are documented in
