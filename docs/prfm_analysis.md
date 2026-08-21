@@ -475,11 +475,12 @@ and total stress of two-phase gas in a `2x3` layout.
 `prfm_vertical_profiles_total_gas.png` repeats the layout using all gas from
 the whole-gas z-profiles.
 
-The default files above use the mean-SFR color mapping. Each scalar relation
-figure also has `_color_by_omega`, `_color_by_stellar_midplane_density`, and
-`_color_by_qshear` variants. Thus each alternate parameter produces a
-midplane balance figure, a pressure-drop balance figure, and a
-component/yield figure.
+The default files above use the mean-SFR color mapping. Every scalar relation
+and vertical-profile figure also has `_color_by_omega`,
+`_color_by_stellar_midplane_density`, and `_color_by_qshear` variants. Thus
+each alternate parameter produces a midplane balance figure, a pressure-drop
+balance figure, a component/yield figure, and both two-phase and total-gas
+vertical-profile figures.
 
 The mean-SFR figures use `plasma`. The orbital-frequency, stellar-density,
 and shear variants use `viridis`, `cividis`, and `magma`, respectively, so

@@ -798,6 +798,7 @@ def plot_prfm_vertical_profiles(
     cmap,
     norm,
     gas_selection="two_phase",
+    colorbar_label=None,
     dpi=180,
 ):
     """Plot suite-mean density and vertical stress profiles."""
@@ -869,10 +870,12 @@ def plot_prfm_vertical_profiles(
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     color_axis = fig.add_axes((0.35, 0.06, 0.30, 0.022))
     colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
-    colorbar.set_label(
-        r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
-        r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
-    )
+    if colorbar_label is None:
+        colorbar_label = (
+            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+        )
+    colorbar.set_label(colorbar_label)
     fig.suptitle(title, fontsize=14)
     fig.subplots_adjust(
         left=0.085, right=0.985, bottom=0.17, top=0.91, wspace=0.28, hspace=0.20
@@ -1001,6 +1004,10 @@ def render_suite_prfm(
         parameter_components = (
             output_dir / f"prfm_pressure_components_yields{suffix}.png"
         )
+        parameter_vertical = output_dir / f"prfm_vertical_profiles{suffix}.png"
+        parameter_vertical_total_gas = (
+            output_dir / f"prfm_vertical_profiles_total_gas{suffix}.png"
+        )
         plot_prfm_balance(
             colored,
             parameter_balance,
@@ -1028,7 +1035,32 @@ def render_suite_prfm(
             colorbar_label=colorbar_label,
             dpi=dpi,
         )
-        for output in (parameter_balance, parameter_delta, parameter_components):
+        plot_prfm_vertical_profiles(
+            profile_summary,
+            colored,
+            parameter_vertical,
+            cmap=parameter_cmap,
+            norm=parameter_norm,
+            colorbar_label=colorbar_label,
+            dpi=dpi,
+        )
+        plot_prfm_vertical_profiles(
+            profile_summary,
+            colored,
+            parameter_vertical_total_gas,
+            cmap=parameter_cmap,
+            norm=parameter_norm,
+            gas_selection="total_gas",
+            colorbar_label=colorbar_label,
+            dpi=dpi,
+        )
+        for output in (
+            parameter_balance,
+            parameter_delta,
+            parameter_components,
+            parameter_vertical,
+            parameter_vertical_total_gas,
+        ):
             print(f"Wrote {output}", flush=True)
 
     return time_series, summary

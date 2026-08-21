@@ -251,6 +251,7 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
         cmap=cmap,
         norm=norm,
         gas_selection="total_gas",
+        colorbar_label=r"$q$",
         dpi=50,
     )
     assert delta.stat().st_size > 0
