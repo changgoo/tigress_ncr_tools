@@ -143,15 +143,22 @@ fraction. External and self-gravitating weights are integrated inward from
 both vertical boundaries. The pressure components are turbulent, thermal,
 turbulent-field Maxwell stress, and mean-field Maxwell stress.
 
+The reducer also measures the stress in reference slabs near $z=\pm L_z/4$
+and stores $\Delta P=P_{\rm mid}-P_{\rm top}$ for each component and their
+sum.
+
 The default `t=200--600` reduction interpolates `sfr10` and `sfr40` from each
 primary history. Feedback yields are formed snapshot by snapshot as
-`pressure / sfr40` and converted to `km/s` before temporal averaging. Model
-colors use the logarithmically normalized `plasma` mapping of mean `sfr10`.
+`pressure / sfr40` and converted to `km/s` before temporal averaging.
+Figure sets use the sequential `plasma` map, colored in turn by mean `sfr10`,
+orbital frequency, stellar midplane density $\Sigma_*/(2H_*)$, and shear
+parameter $q$.
 
 The output directory `SUITE/prfm_diagnostics/` contains the complete
-time-series CSV, a per-model summary with means and 16/50/84 percentiles, the
-model/color key, a three-panel pressure-weight-SFR diagnostic, and a `2x4`
-pressure-component/yield diagnostic.
+time-series and vertical-profile CSV caches, a per-model summary with means
+and 16/50/84 percentiles, the model/color key, midplane and pressure-drop
+balance figures, a `2x4` pressure-component/yield figure, and a `2x3`
+vertical-profile figure.
 
 The physical definitions, discrete reduction equations, unit conversions,
 output schema, and interpretation are documented in

@@ -8,9 +8,13 @@ description of the 32-model TIGRESS-NCR suite. It reduces raw vertical-profile
 
 - the two-phase midplane thermal, turbulent, and magnetic stresses;
 - the external-gravity and gas-self-gravity vertical weights;
+- the stress difference between the midplane and upper/lower reference slabs;
+- time-averaged vertical density and pressure profiles;
 - pressure-to-weight ratios;
-- component and total feedback yields; and
-- suite-level pressure-weight-SFR diagnostic figures.
+- component and total feedback yields;
+- suite-level pressure-weight-SFR diagnostic figures; and
+- figure variants colored by SFR, orbital frequency, stellar midplane density,
+  and shear parameter.
 
 The default analysis interval is $t=200$--600. The implementation is
 `src/tigress_ncr_tools/plot_suite_prfm.py`.
@@ -43,8 +47,9 @@ P_{\rm tot,2p}\approx\mathcal{W},
 \frac{P_{\rm tot,2p}}{\mathcal{W}}\approx 1.
 $$
 
-It does not subtract the stress at the top of the domain, so this comparison
-implicitly treats the boundary stress as negligible.
+This midplane-pressure comparison treats the upper stress as negligible. A
+separate diagnostic retains that term explicitly by comparing the measured
+pressure drop, $\Delta P_{\rm tot,2p}$, with the same weight.
 
 Feedback modulation is expressed using a component yield,
 
@@ -70,10 +75,11 @@ For each selected dump, the reducer reads:
 
 | Source | Required quantities |
 |---|---|
-| `phase7`, `phase11`, `phase12`, `phase13` z-profiles | `z`, `A`, `Ek3`, `P`, `PB1-3`, `dPB1-3` |
+| `phase7`, `phase11`, `phase12`, `phase13` z-profiles | `z`, `A`, `d`, `Ek3`, `P`, `PB1-3`, `dPB1-3` |
 | `whole` z-profile | `z`, `dWext`, `dWsg` |
 | primary history file | `time`, `sfr10`, `sfr40` |
 | `athinput*`, `<domain1>` | `x1min`, `x1max`, `x2min`, `x2max` |
+| `athinput*` and runtime overrides | `Omega`, `qshear`, `SurfS`, `zstar` |
 
 All four phase profiles and the whole-gas profile must have the same stored
 time and exactly the same $z$ grid. The weight grid must be uniformly
@@ -197,6 +203,45 @@ $$
 Radiation pressure, cosmic-ray pressure, and hot-gas pressure are not included
 in this definition of `pressure_total`.
 
+## Pressure drop from the midplane to the reference slabs
+
+The pressure-drop diagnostic samples symmetric slabs halfway between the
+midplane and the vertical boundaries. For uniform spacing $\Delta z$, define
+
+$$
+z_b=\max_j|z_j|+\frac{\Delta z}{2},
+\qquad
+z_t=\frac{z_b}{2}.
+$$
+
+With top-slab half-width $h_t=10\ {\rm pc}$ by default, the top operator is
+
+$$
+\mathcal{T}_{h_t}[Q]
+=\frac{1}{N_t}
+\sum_{j:\,||z_j|-z_t|\le h_t}Q_j.
+$$
+
+For component $c$, let $Q_c$ denote the corresponding extensive stress
+numerator defined above. The reported top pressure is
+
+$$
+P_{c,\rm top}
+=C_P\frac{\mathcal{T}_{h_t}[Q_c]}{\mathcal{M}_h[A_{\rm 2p}]}.
+$$
+
+Both the midplane and top terms use the midplane two-phase area in the
+denominator. The pressure drop is therefore
+
+$$
+\Delta P_c
+=P_{c,\rm mid}-P_{c,\rm top}
+=C_P\frac{\mathcal{M}_h[Q_c]-\mathcal{T}_{h_t}[Q_c]}
+             {\mathcal{M}_h[A_{\rm 2p}]}.
+$$
+
+Component drops sum to $\Delta P_{\rm tot,2p}$.
+
 ## Vertical weight
 
 Weight is constructed from the whole-gas `dWext` and `dWsg` profiles, not
@@ -300,6 +345,13 @@ $$
 $$
 
 A snapshot with nonfinite or nonpositive `sfr40` receives a missing
+The pressure-drop yields use the same conversion:
+
+$$
+\Upsilon_{\Delta,c}
+=C_Y\frac{\Delta P_c/k_B}{\Sigma_{\rm SFR,40}}.
+$$
+
 (`NaN`) yield rather than an infinite value.
 
 ## SFR matching, model colors, and temporal statistics
@@ -327,6 +379,18 @@ evaluated by trapezoidal integration with interpolated values at the exact
 time bounds. The default colormap is logarithmically normalized `plasma`,
 trimmed to the base-map interval 0.06--0.90.
 
+Additional figure sets use the model orbital frequency $\Omega$, shear
+parameter $q$, and stellar midplane density
+
+$$
+\rho_*=\frac{\Sigma_*}{2H_*}
+=\frac{{\tt SurfS}}{2\,{\tt zstar}}.
+$$
+
+All variants retain the sequential `plasma` map. The $\Omega$ and $\rho_*$
+colors use logarithmic normalization; $q$ uses linear normalization. These
+parameters are stored directly in `prfm_model_summary.csv`.
+
 The per-model summary uses an unweighted mean over the selected z-profile
 snapshots,
 
@@ -350,6 +414,24 @@ $$
 
 Likewise, yields are formed snapshot-by-snapshot
 before their temporal statistics are calculated.
+
+## Vertical density and pressure profiles
+
+For the profile figure, the two-phase extensive fields are divided by the
+full horizontal box area at each height:
+
+$$
+\langle n_{\rm H,2p}\rangle_{xy}(z)
+=\frac{d_{\rm 2p}(z)}{A_{\rm box}},
+\qquad
+P_c(z)
+=C_P\frac{Q_c(z)}{A_{\rm box}}.
+$$
+
+Unlike the conditional midplane scalar, these profiles include the two-phase
+covering fraction and are the horizontally averaged terms relevant to the
+vertical momentum equation. Each model curve is the snapshot mean over the
+selected interval; the faint envelope marks its 16th--84th percentiles.
 
 ## Figures
 
@@ -377,6 +459,18 @@ not drawn, and a percentile segment whose lower endpoint is nonpositive is
 omitted. Instantaneous magnetic Maxwell stresses may legitimately be
 negative because vertical tension can exceed horizontal magnetic pressure.
 
+`prfm_delta_pressure_weight_relations.png` repeats the three-panel balance
+figure with $\Delta P_{\rm tot,2p}$ in place of the midplane pressure.
+
+`prfm_vertical_profiles.png` contains the density, four component stresses,
+and total stress in a `2x3` layout.
+
+The default files above use the mean-SFR color mapping. Each scalar relation
+figure also has `_color_by_omega`, `_color_by_stellar_midplane_density`, and
+`_color_by_qshear` variants. Thus each alternate parameter produces a
+midplane balance figure, a pressure-drop balance figure, and a
+component/yield figure.
+
 ## Output files and columns
 
 The default output folder is `SUITE/prfm_diagnostics/`.
@@ -391,18 +485,30 @@ There is one row per selected model and z-profile dump. Columns are:
 - pressures: `pressure_turbulent`, `pressure_thermal`,
   `pressure_magnetic_turbulent`, `pressure_magnetic_mean`,
   `pressure_total`;
+- top-slab pressures: the same component suffixes prefixed by `pressure_top_`;
+- pressure drops: the same component suffixes prefixed by `pressure_delta_`,
+  including `pressure_delta_total`;
 - weights: `weight_external`, `weight_self_gravity`, `weight_total`;
-- balance: `pressure_weight_ratio`; and
+- balance: `pressure_weight_ratio` and `pressure_delta_weight_ratio`; and
 - yields: `yield_turbulent`, `yield_thermal`,
-  `yield_magnetic_turbulent`, `yield_magnetic_mean`, `yield_total`.
+  `yield_magnetic_turbulent`, `yield_magnetic_mean`, `yield_total`, and the
+  corresponding `yield_delta_` columns.
 
 Pressure and weight columns are in ${\rm K\,cm^{-3}}$, equivalent to
 pressure divided by $k_B$. Yield columns are in ${\rm km\,s^{-1}}$.
 
+### `prfm_vertical_profiles.csv`
+
+This table has one row per model and height. It stores `samples`, `z`, and the
+snapshot mean and 16th, 50th, and 84th percentiles for two-phase area
+fraction, density, the four pressure components, and total pressure. Density
+and pressure profiles use full-box horizontal-area normalization.
+
 ### `prfm_model_summary.csv`
 
 This table contains `model`, `samples`, `time_min`, `time_max`, and
-`mean_sfr10_color`. For every summarized physical field $X$, it contains
+`mean_sfr10_color`, plus `omega`, `stellar_midplane_density`, and `qshear`.
+For every summarized physical field $X$, it contains
 
 - `X_mean`;
 - `X_p16`;
@@ -414,9 +520,8 @@ Rows retain the descending `mean_sfr10_color` model order.
 ### Other products
 
 `model_sfr_colors.csv` records the rank, model name, time-weighted mean
-`sfr10`, plotted hexadecimal color, and averaging bounds. The two PNG files
-are the diagnostic
-figures described above.
+`sfr10`, plotted hexadecimal color, and averaging bounds. The PNG products
+are the diagnostic figures described above.
 
 ## Running the analysis
 
@@ -438,14 +543,18 @@ plot-suite-prfm SUITE --stride 4 --overwrite
 # Change the midplane slab to |z| <= 20 pc.
 plot-suite-prfm SUITE --midplane-half-width 20 --overwrite
 
+# Change the half-width of each top reference slab.
+plot-suite-prfm SUITE --top-half-width 20 --overwrite
+
 # Write products somewhere else.
 plot-suite-prfm SUITE --output-dir /path/to/prfm_output
 ```
 
-If `prfm_time_series.csv` already exists, it is reused unless `--overwrite`
-is given. Use `--overwrite` whenever the source profiles, time interval,
-stride, midplane width, or reduction code changes. Reusing a cache does not
-revalidate those settings.
+The time-series and vertical-profile caches are reused only when both exist
+and the time series contains the pressure-drop columns. Use `--overwrite`
+whenever the source profiles, time interval, stride, midplane width, top-slab
+width, or reduction code changes. Cache reuse does not otherwise revalidate
+those settings.
 
 ## Interpretation and limitations
 
@@ -456,8 +565,9 @@ revalidate those settings.
 - Two-phase pressure and whole-gas weight deliberately use different phase
   selections.
 - `pressure_total` excludes radiation, cosmic-ray, and hot-phase pressure.
-- The comparison uses midplane pressure rather than
-  $P_{\rm mid}-P_{\rm boundary}$.
+- The pressure-drop comparison retains the finite stress in slabs near
+  $z=\pm z_b/2$; these reference slabs are not the domain boundaries.
+- Both midplane-pressure and pressure-drop balance figures are retained.
 - Snapshot summary means are not cadence-weighted, although the output cadence
   is expected to be nearly uniform. Model-color `sfr10` is time-weighted.
 - Percentile bars describe temporal variability of each axis independently.
