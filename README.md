@@ -56,8 +56,10 @@ histories and writes `velocity_dispersions.png` plus an exact
 `sqrt(2*x1KE/mass)`, `sqrt(2*x2dke/mass)` (background shear removed),
 `sqrt(2*x3KE/mass)`, `sqrt(P/mass)`, and `sqrt(2*xNME/mass)` for all three
 magnetic components. Model color is a logarithmically normalized `plasma`
-map of mean `sfr10` over `t=200--600`. Use `--cmap`, `--color-scale`, `--yscale`,
-`--start`, and `--stop` to change the presentation or time interval.
+map of mean `sfr10` over `t=200--600`. Additional velocity-dispersion figures
+use `viridis` for orbital frequency, `cividis` for stellar midplane density,
+and `magma` for shear parameter. Use `--cmap`, `--color-scale`, `--yscale`,
+`--start`, and `--stop` to change the SFR presentation or time interval.
 
 `plot-suite-evolution` writes the ranked 4x8 total-gas surface-density frames,
 `model_order.csv`, and (with `--movie`) an MP4 beneath
@@ -148,8 +150,10 @@ and stores $\Delta P=P_{\rm mid}-P_{\rm top}$ for each component and their
 sum.
 
 The default `t=200--600` reduction interpolates `sfr10` and `sfr40` from each
-primary history. Feedback yields are formed snapshot by snapshot as
-`pressure / sfr40` and converted to `km/s` before temporal averaging.
+primary history. The evolution plot retains this full interval, while scalar
+summaries and vertical profiles default to averages over `t=400--600`.
+Feedback yields are formed snapshot by snapshot as `pressure / sfr40` and
+converted to `km/s` before temporal averaging.
 The mean-`sfr10` figures use `plasma`. Alternate parameter figures use
 distinct sequential maps: `viridis` for orbital frequency, `cividis` for
 stellar midplane density $\Sigma_*/(2H_*)$, and `magma` for shear parameter
@@ -161,7 +165,8 @@ and 16/50/84 percentiles, the model/color key, midplane and pressure-drop
 balance figures, a `2x4` pressure-component/yield figure, and separate `2x3`
 vertical-profile figures for two-phase and total gas. The three alternate
 parameter color mappings are applied to the vertical profiles as well as the
-scalar relation figures.
+scalar relation figures. `prfm_pressure_weight_time_evolution.png` shows the
+full-suite midplane pressure and vertical weight histories.
 
 The physical definitions, discrete reduction equations, unit conversions,
 output schema, and interpretation are documented in

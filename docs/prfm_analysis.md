@@ -387,12 +387,14 @@ $$
 =\frac{{\tt SurfS}}{2\,{\tt zstar}}.
 $$
 
-All variants retain the sequential `plasma` map. The $\Omega$ and $\rho_*$
-colors use logarithmic normalization; $q$ uses linear normalization. These
-parameters are stored directly in `prfm_model_summary.csv`.
+The SFR, $\Omega$, $\rho_*$, and $q$ variants use `plasma`, `viridis`,
+`cividis`, and `magma`, respectively. The $\Omega$ and $\rho_*$ colors use
+logarithmic normalization; $q$ uses linear normalization. These parameters
+are stored directly in `prfm_model_summary.csv`.
 
-The per-model summary uses an unweighted mean over the selected z-profile
-snapshots,
+The default time-series cache covers 200--600 Myr, while summary statistics
+and vertical profiles use the 400--600 Myr subset. The per-model summary uses
+an unweighted mean over the snapshots within that summary window,
 
 $$
 \langle X\rangle_{\rm snap}
@@ -441,6 +443,11 @@ P_{c,{\rm whole}}(z)=C_P\frac{Q_{c,{\rm whole}}(z)}{A_{\rm box}}.
 $$
 
 ## Figures
+
+`prfm_pressure_weight_time_evolution.png` shows the 200--600 Myr evolution of
+two-phase midplane total pressure and whole-column vertical weight for all
+models. The 400--600 Myr summary window is shaded, and tracks retain the
+mean-SFR `plasma` encoding.
 
 `prfm_pressure_weight_relations.png` contains:
 
@@ -519,12 +526,15 @@ snapshot mean and 16th, 50th, and 84th percentiles for two-phase area
 fraction, density, the four pressure components, and total pressure. It also
 stores total-gas density and the four pressure components plus their sum,
 using the `total_gas_` prefix. All density and pressure profiles use full-box
-horizontal-area normalization.
+horizontal-area normalization. `average_start` and `average_stop` record the
+requested profile-averaging window, which defaults to 400 and 600 Myr.
 
 ### `prfm_model_summary.csv`
 
 This table contains `model`, `samples`, `time_min`, `time_max`, and
 `mean_sfr10_color`, plus `omega`, `stellar_midplane_density`, and `qshear`.
+The default statistics cover 400--600 Myr; the color-driving mean SFR remains
+the time-weighted 200--600 Myr value used for suite ordering.
 For every summarized physical field $X$, it contains
 
 - `X_mean`;
@@ -551,8 +561,12 @@ plot-suite-prfm /tigress/changgoo/anvil/TIGRESS-NCR-suite
 Useful options include:
 
 ```bash
-# Change the analysis interval.
-plot-suite-prfm SUITE --start 250 --stop 550
+# Change both the cached evolution interval and summary window.
+plot-suite-prfm SUITE --start 250 --stop 550 \
+  --summary-start 400 --summary-stop 550 --overwrite
+
+# Keep 200--600 Myr histories but average summaries over 450--600 Myr.
+plot-suite-prfm SUITE --summary-start 450 --summary-stop 600 --overwrite
 
 # Read every fourth selected z-profile.
 plot-suite-prfm SUITE --stride 4 --overwrite
@@ -569,9 +583,10 @@ plot-suite-prfm SUITE --output-dir /path/to/prfm_output
 
 The time-series and vertical-profile caches are reused only when both exist,
 the time series contains the pressure-drop columns, and the profile cache
-contains the total-gas fields. Use `--overwrite` whenever the source
-profiles, time interval, stride, midplane width, top-slab width, or reduction
-code changes. Cache reuse does not otherwise revalidate those settings.
+contains the total-gas fields with the requested summary bounds. Use
+`--overwrite` whenever the source profiles, evolution interval, stride,
+midplane width, top-slab width, or reduction code changes. Cache reuse does
+not otherwise revalidate those settings.
 
 ## Interpretation and limitations
 

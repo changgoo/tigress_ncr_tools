@@ -32,6 +32,7 @@ DEFAULT_OUTPUT_NAME = "prfm_diagnostics"
 DEFAULT_TIME_SERIES_NAME = "prfm_time_series.csv"
 DEFAULT_SUMMARY_NAME = "prfm_model_summary.csv"
 DEFAULT_PROFILE_NAME = "prfm_vertical_profiles.csv"
+DEFAULT_EVOLUTION_NAME = "prfm_pressure_weight_time_evolution.png"
 DEFAULT_CMAP = "plasma"
 PARAMETER_COLOR_SPECS = (
     ("omega", "log", "viridis", r"$\Omega\ [{\rm Myr}^{-1}]$"),
@@ -44,6 +45,7 @@ PARAMETER_COLOR_SPECS = (
     ("qshear", "linear", "magma", r"$q$"),
 )
 DEFAULT_TIME_RANGE = DEFAULT_SFR_RANGE
+DEFAULT_SUMMARY_RANGE = (400.0, 600.0)
 DEFAULT_SFR_FIELD = "sfr40"
 DEFAULT_TOP_HALF_WIDTH = 10.0
 TWO_PHASE_INDICES = (7, 11, 12, 13)
@@ -298,20 +300,21 @@ def reduce_zprof_snapshot(
         },
     }
 
-    whole_fields = (
-        "z",
-        "d",
-        "Ek3",
-        "P",
-        "PB1",
-        "PB2",
-        "PB3",
-        "dPB1",
-        "dPB2",
-        "dPB3",
-        "dWext",
-        "dWsg",
-    )
+    whole_fields = ["z", "dWext", "dWsg"]
+    if return_profile:
+        whole_fields.extend(
+            (
+                "d",
+                "Ek3",
+                "P",
+                "PB1",
+                "PB2",
+                "PB3",
+                "dPB1",
+                "dPB2",
+                "dPB3",
+            )
+        )
     weight_time, whole = _read_profile_columns(whole_path, whole_fields)
     if not np.isclose(weight_time, reference_time):
         raise ValueError(f"whole and phase profile times differ at {whole_path}")
@@ -349,6 +352,7 @@ def reduce_zprof_snapshot(
 
     profile_pressure = _pressure_numerators(summed)
     profile = {
+        "time": float(reference_time),
         "z": reference_z,
         "area_two_phase_fraction": summed["A"] / float(horizontal_area),
         "density_two_phase": summed["d"] / float(horizontal_area),
@@ -425,7 +429,7 @@ def model_prfm_parameters(model):
     }
 
 
-def _summarize_vertical_profiles(profiles, model):
+def _summarize_vertical_profiles(profiles, model, average_bounds):
     """Return temporal mean and percentile profiles for one model."""
     if not profiles:
         raise ValueError("at least one vertical profile is required")
@@ -438,6 +442,8 @@ def _summarize_vertical_profiles(profiles, model):
     result = pd.DataFrame({"z": reference_z})
     result.insert(0, "model", Path(model).name)
     result.insert(1, "samples", len(profiles))
+    result.insert(2, "average_start", float(average_bounds[0]))
+    result.insert(3, "average_stop", float(average_bounds[1]))
     for field in PROFILE_FIELDS:
         values = np.stack([frame[field].to_numpy(dtype=float) for frame in profiles])
         result[f"{field}_mean"] = np.nanmean(values, axis=0)
@@ -455,10 +461,13 @@ def reduce_model_prfm(
     midplane_half_width=10.0,
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
     return_profiles=False,
+    profile_time_bounds=None,
 ):
     """Return one model's pressure, weight, SFR, and yield time series."""
     if stride <= 0:
         raise ValueError("stride must be positive")
+    if profile_time_bounds is None:
+        profile_time_bounds = time_bounds
     indexed = _zprof_index(model)
     selected = []
     for dump_id, problem_id, phase7 in indexed:
@@ -481,17 +490,20 @@ def reduce_model_prfm(
     horizontal_area = _mesh_area(model)
     rows = []
     profiles = []
-    for index, (dump_id, problem_id, phase7, _) in enumerate(selected, start=1):
+    for index, (dump_id, problem_id, phase7, dump_time) in enumerate(selected, start=1):
         phase_paths, whole = _paths_for_dump(phase7, problem_id, dump_id)
+        use_profile = return_profiles and (
+            profile_time_bounds[0] <= dump_time <= profile_time_bounds[1]
+        )
         reduced = reduce_zprof_snapshot(
             phase_paths,
             whole,
             horizontal_area,
             midplane_half_width=midplane_half_width,
             top_half_width=top_half_width,
-            return_profile=return_profiles,
+            return_profile=use_profile,
         )
-        if return_profiles:
+        if use_profile:
             row, profile = reduced
             profiles.append(profile)
         else:
@@ -536,7 +548,9 @@ def reduce_model_prfm(
             )
     time_series = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
     if return_profiles:
-        return time_series, _summarize_vertical_profiles(profiles, model)
+        return time_series, _summarize_vertical_profiles(
+            profiles, model, profile_time_bounds
+        )
     return time_series
 
 
@@ -548,6 +562,7 @@ def reduce_suite_prfm(
     midplane_half_width=10.0,
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
     return_profiles=False,
+    profile_time_bounds=None,
 ):
     """Reduce every ranked model to one concatenated time-series table."""
     frames = []
@@ -564,6 +579,7 @@ def reduce_suite_prfm(
             midplane_half_width=midplane_half_width,
             top_half_width=top_half_width,
             return_profiles=return_profiles,
+            profile_time_bounds=profile_time_bounds,
         )
         if return_profiles:
             time_series, profiles = reduced
@@ -577,8 +593,14 @@ def reduce_suite_prfm(
     return suite_time_series
 
 
-def summarize_prfm(time_series, ranked, model_parameters=None):
+def summarize_prfm(time_series, ranked, model_parameters=None, time_bounds=None):
     """Return per-model temporal means, medians, and 16--84 percentiles."""
+    if time_bounds is not None:
+        time_series = time_series[
+            time_series["time"].between(time_bounds[0], time_bounds[1])
+        ]
+        if time_series.empty:
+            raise ValueError(f"no PRFM samples in summary window {time_bounds}")
     mean_sfr = {model.name: value for model, value in ranked}
     model_parameters = model_parameters or {}
     rows = []
@@ -790,6 +812,93 @@ def plot_prfm_components(
     plt.close(fig)
 
 
+def plot_prfm_time_evolution(
+    time_series,
+    summary,
+    output,
+    *,
+    cmap,
+    norm,
+    time_bounds=DEFAULT_TIME_RANGE,
+    average_bounds=DEFAULT_SUMMARY_RANGE,
+    colorbar_label=None,
+    dpi=180,
+):
+    """Plot suite midplane pressure and weight histories."""
+    specifications = (
+        (
+            "pressure_total",
+            r"$P_{\rm tot,2p}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
+            "Two-phase midplane total pressure",
+        ),
+        (
+            "weight_total",
+            r"$\mathcal{W}/k_B\ [{\rm cm}^{-3}\,{\rm K}]$",
+            "Whole-column vertical weight",
+        ),
+    )
+    colors = {
+        row["model"]: cmap(norm(row["mean_sfr10_color"]))
+        for _, row in summary.iterrows()
+    }
+    fig, axes = plt.subplots(2, 1, figsize=(12.5, 8.5), sharex=True)
+    for axis, (field, ylabel, title) in zip(axes, specifications):
+        for model, frame in time_series.groupby("model", sort=False):
+            time = frame["time"].to_numpy(dtype=float)
+            values = frame[field].to_numpy(dtype=float)
+            use = (
+                np.isfinite(time)
+                & np.isfinite(values)
+                & (values > 0.0)
+                & (time >= time_bounds[0])
+                & (time <= time_bounds[1])
+            )
+            axis.plot(
+                time[use],
+                values[use],
+                color=colors[model],
+                linewidth=0.75,
+                alpha=0.82,
+            )
+        axis.axvspan(
+            average_bounds[0],
+            average_bounds[1],
+            color="0.5",
+            alpha=0.08,
+            linewidth=0,
+        )
+        axis.set_yscale("log")
+        axis.set_ylabel(ylabel)
+        axis.set_title(title, fontsize=12)
+        axis.grid(alpha=0.17, which="both")
+        axis.tick_params(direction="in", top=True, right=True)
+    axes[-1].set_xlabel(r"simulation time $t\ [{\rm Myr}]$")
+    axes[-1].set_xlim(time_bounds)
+    axes[0].text(
+        0.985,
+        0.94,
+        rf"shaded: {average_bounds[0]:g}--{average_bounds[1]:g} Myr average",
+        transform=axes[0].transAxes,
+        ha="right",
+        va="top",
+        color="0.35",
+        fontsize=9,
+    )
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = fig.add_axes((0.35, 0.06, 0.30, 0.022))
+    colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    if colorbar_label is None:
+        colorbar_label = (
+            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+        )
+    colorbar.set_label(colorbar_label)
+    fig.suptitle("PRFM pressure and weight evolution", fontsize=14)
+    fig.subplots_adjust(left=0.10, right=0.98, bottom=0.16, top=0.91, hspace=0.18)
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+
+
 def plot_prfm_vertical_profiles(
     profile_summary,
     summary,
@@ -799,6 +908,7 @@ def plot_prfm_vertical_profiles(
     norm,
     gas_selection="two_phase",
     colorbar_label=None,
+    title_suffix="",
     dpi=180,
 ):
     """Plot suite-mean density and vertical stress profiles."""
@@ -876,7 +986,7 @@ def plot_prfm_vertical_profiles(
             r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
         )
     colorbar.set_label(colorbar_label)
-    fig.suptitle(title, fontsize=14)
+    fig.suptitle(title + title_suffix, fontsize=14)
     fig.subplots_adjust(
         left=0.085, right=0.985, bottom=0.17, top=0.91, wspace=0.28, hspace=0.20
     )
@@ -890,6 +1000,7 @@ def render_suite_prfm(
     model_glob=DEFAULT_MODEL_GLOB,
     output_dir=None,
     time_bounds=DEFAULT_TIME_RANGE,
+    summary_bounds=DEFAULT_SUMMARY_RANGE,
     stride=1,
     midplane_half_width=10.0,
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
@@ -898,6 +1009,10 @@ def render_suite_prfm(
     overwrite=False,
 ):
     """Reduce, cache, and plot full-suite PRFM diagnostics."""
+    if summary_bounds[1] <= summary_bounds[0]:
+        raise ValueError("summary bounds must be increasing")
+    if summary_bounds[0] < time_bounds[0] or summary_bounds[1] > time_bounds[1]:
+        raise ValueError("summary bounds must lie within time bounds")
     suite = Path(suite).expanduser()
     output_dir = Path(output_dir) if output_dir else suite / DEFAULT_OUTPUT_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -909,13 +1024,20 @@ def render_suite_prfm(
     cache_ready = time_series_path.exists() and profile_path.exists()
     if cache_ready:
         cached_columns = pd.read_csv(time_series_path, nrows=0).columns
-        cached_profile_columns = pd.read_csv(profile_path, nrows=0).columns
+        cached_profile = pd.read_csv(profile_path, nrows=1)
+        cached_profile_columns = cached_profile.columns
         cache_ready = {"pressure_delta_total", "yield_delta_total"}.issubset(
             cached_columns
         ) and {
             "total_gas_density_mean",
             "total_gas_pressure_total_mean",
+            "average_start",
+            "average_stop",
         }.issubset(cached_profile_columns)
+        if cache_ready:
+            cache_ready = np.isclose(
+                cached_profile["average_start"].iloc[0], summary_bounds[0]
+            ) and np.isclose(cached_profile["average_stop"].iloc[0], summary_bounds[1])
     if cache_ready and not overwrite:
         print(f"Loading existing {time_series_path}", flush=True)
         time_series = pd.read_csv(time_series_path)
@@ -934,6 +1056,7 @@ def render_suite_prfm(
             midplane_half_width=midplane_half_width,
             top_half_width=top_half_width,
             return_profiles=True,
+            profile_time_bounds=summary_bounds,
         )
         _atomic_csv(time_series, time_series_path)
         _atomic_csv(profile_summary, profile_path)
@@ -941,7 +1064,9 @@ def render_suite_prfm(
         print(f"Wrote {time_series_path}", flush=True)
 
     model_parameters = {model.name: model_prfm_parameters(model) for model, _ in ranked}
-    summary = summarize_prfm(time_series, ranked, model_parameters)
+    summary = summarize_prfm(
+        time_series, ranked, model_parameters, time_bounds=summary_bounds
+    )
     summary_path = output_dir / DEFAULT_SUMMARY_NAME
     _atomic_csv(summary, summary_path)
     print(f"Wrote {summary_path}", flush=True)
@@ -955,10 +1080,37 @@ def render_suite_prfm(
         norm,
         bounds=time_bounds,
     )
+    average_suffix = f" ({summary_bounds[0]:g}--{summary_bounds[1]:g} Myr averages)"
+    evolution = output_dir / DEFAULT_EVOLUTION_NAME
+    plot_prfm_time_evolution(
+        time_series,
+        summary,
+        evolution,
+        cmap=cmap,
+        norm=norm,
+        time_bounds=time_bounds,
+        average_bounds=summary_bounds,
+        dpi=dpi,
+    )
     balance = output_dir / "prfm_pressure_weight_relations.png"
     components = output_dir / "prfm_pressure_components_yields.png"
-    plot_prfm_balance(summary, balance, cmap=cmap, norm=norm, dpi=dpi)
-    plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=dpi)
+    plot_prfm_balance(
+        summary,
+        balance,
+        cmap=cmap,
+        norm=norm,
+        title="PRFM pressure, weight, and star-formation relations" + average_suffix,
+        dpi=dpi,
+    )
+    plot_prfm_components(
+        summary,
+        components,
+        cmap=cmap,
+        norm=norm,
+        title="Two-phase midplane pressure components and feedback yields"
+        + average_suffix,
+        dpi=dpi,
+    )
     delta_balance = output_dir / "prfm_delta_pressure_weight_relations.png"
     vertical = output_dir / "prfm_vertical_profiles.png"
     vertical_total_gas = output_dir / "prfm_vertical_profiles_total_gas.png"
@@ -969,11 +1121,18 @@ def render_suite_prfm(
         norm=norm,
         pressure_field="pressure_delta_total",
         pressure_symbol=r"\Delta P_{\rm tot,2p}",
-        title="PRFM pressure-drop, weight, and star-formation relations",
+        title="PRFM pressure-drop, weight, and star-formation relations"
+        + average_suffix,
         dpi=dpi,
     )
     plot_prfm_vertical_profiles(
-        profile_summary, summary, vertical, cmap=cmap, norm=norm, dpi=dpi
+        profile_summary,
+        summary,
+        vertical,
+        cmap=cmap,
+        norm=norm,
+        title_suffix=average_suffix,
+        dpi=dpi,
     )
     plot_prfm_vertical_profiles(
         profile_summary,
@@ -982,8 +1141,10 @@ def render_suite_prfm(
         cmap=cmap,
         norm=norm,
         gas_selection="total_gas",
+        title_suffix=average_suffix,
         dpi=dpi,
     )
+    print(f"Wrote {evolution}", flush=True)
     print(f"Wrote {delta_balance}", flush=True)
     print(f"Wrote {vertical}", flush=True)
     print(f"Wrote {vertical_total_gas}", flush=True)
@@ -1014,6 +1175,8 @@ def render_suite_prfm(
             cmap=parameter_cmap,
             norm=parameter_norm,
             colorbar_label=colorbar_label,
+            title="PRFM pressure, weight, and star-formation relations"
+            + average_suffix,
             dpi=dpi,
         )
         plot_prfm_balance(
@@ -1024,7 +1187,8 @@ def render_suite_prfm(
             pressure_field="pressure_delta_total",
             pressure_symbol=r"\Delta P_{\rm tot,2p}",
             colorbar_label=colorbar_label,
-            title="PRFM pressure-drop, weight, and star-formation relations",
+            title="PRFM pressure-drop, weight, and star-formation relations"
+            + average_suffix,
             dpi=dpi,
         )
         plot_prfm_components(
@@ -1033,6 +1197,8 @@ def render_suite_prfm(
             cmap=parameter_cmap,
             norm=parameter_norm,
             colorbar_label=colorbar_label,
+            title="Two-phase midplane pressure components and feedback yields"
+            + average_suffix,
             dpi=dpi,
         )
         plot_prfm_vertical_profiles(
@@ -1042,6 +1208,7 @@ def render_suite_prfm(
             cmap=parameter_cmap,
             norm=parameter_norm,
             colorbar_label=colorbar_label,
+            title_suffix=average_suffix,
             dpi=dpi,
         )
         plot_prfm_vertical_profiles(
@@ -1052,6 +1219,7 @@ def render_suite_prfm(
             norm=parameter_norm,
             gas_selection="total_gas",
             colorbar_label=colorbar_label,
+            title_suffix=average_suffix,
             dpi=dpi,
         )
         for output in (
@@ -1073,6 +1241,8 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--start", type=float, default=DEFAULT_TIME_RANGE[0])
     parser.add_argument("--stop", type=float, default=DEFAULT_TIME_RANGE[1])
+    parser.add_argument("--summary-start", type=float, default=DEFAULT_SUMMARY_RANGE[0])
+    parser.add_argument("--summary-stop", type=float, default=DEFAULT_SUMMARY_RANGE[1])
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--midplane-half-width", type=float, default=10.0)
     parser.add_argument("--top-half-width", type=float, default=DEFAULT_TOP_HALF_WIDTH)
@@ -1082,6 +1252,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.stop <= args.start:
         parser.error("--stop must be greater than --start")
+    if args.summary_stop <= args.summary_start:
+        parser.error("--summary-stop must be greater than --summary-start")
+    if args.summary_start < args.start or args.summary_stop > args.stop:
+        parser.error("summary window must lie within --start and --stop")
     if args.stride <= 0:
         parser.error("--stride must be positive")
     if args.midplane_half_width <= 0.0:
@@ -1095,6 +1269,7 @@ def main(argv=None):
         model_glob=args.model_glob,
         output_dir=args.output_dir,
         time_bounds=(args.start, args.stop),
+        summary_bounds=(args.summary_start, args.summary_stop),
         stride=args.stride,
         midplane_half_width=args.midplane_half_width,
         top_half_width=args.top_half_width,

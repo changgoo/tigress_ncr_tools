@@ -7,9 +7,11 @@ import pytest
 matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_hst_evolution import (
+    HISTORY_PARAMETER_COLOR_SPECS,
     characteristic_speed,
     discover_history_models,
     history_speeds,
+    model_history_parameters,
     plot_velocity_evolution,
     sfr_colormap,
     write_model_colors,
@@ -106,9 +108,27 @@ def test_velocity_plot_contains_colored_tracks(monkeypatch, tmp_path):
         output,
         time_bounds=(0.0, 2.0),
         history_samples=3,
+        colorbar_label=r"$q$",
         dpi=60,
     )
     image = matplotlib.image.imread(output)
     upper_left = image[: image.shape[0] // 2, : image.shape[1] // 4, :3]
     chroma = np.ptp(upper_left, axis=-1)
     assert np.count_nonzero(chroma > 0.08) > 20
+
+
+def test_history_parameter_colors_are_distinct(monkeypatch):
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_hst_evolution.read_shear_parameters",
+        lambda model: ("source", 0.8, 0.03),
+    )
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_hst_evolution.input_parameter",
+        lambda model, name: {"SurfS": 40.0, "zstar": 200.0}[name],
+    )
+    assert model_history_parameters(Path("model")) == {
+        "omega": 0.03,
+        "stellar_midplane_density": 0.1,
+        "qshear": 0.8,
+    }
+    assert len({cmap for _, _, cmap, _ in HISTORY_PARAMETER_COLOR_SPECS}) == 3

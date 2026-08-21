@@ -14,6 +14,7 @@ from tigress_ncr_tools.plot_suite_prfm import (
     ZPROF_PRESSURE_OVER_KB,
     plot_prfm_balance,
     plot_prfm_components,
+    plot_prfm_time_evolution,
     plot_prfm_vertical_profiles,
     reduce_zprof_snapshot,
     summarize_prfm,
@@ -223,6 +224,11 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     assert np.all(summary["samples"] == 3)
     assert summary.loc[0, "pressure_total_mean"] == 6000.0
     assert summary.loc[0, "omega"] == 0.05
+    late_summary = summarize_prfm(
+        _time_series(), ranked, parameters, time_bounds=(400.0, 600.0)
+    )
+    assert np.all(late_summary["samples"] == 2)
+    assert late_summary.loc[0, "pressure_total_mean"] == 6600.0
 
     cmap, norm = sfr_colormap([2.0e-3, 1.0e-3], "plasma", "log")
     balance = tmp_path / "balance.png"
@@ -230,6 +236,7 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     delta = tmp_path / "delta.png"
     vertical = tmp_path / "vertical.png"
     vertical_total_gas = tmp_path / "vertical_total_gas.png"
+    evolution = tmp_path / "evolution.png"
     plot_prfm_balance(summary, balance, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_balance(
@@ -254,9 +261,20 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
         colorbar_label=r"$q$",
         dpi=50,
     )
+    plot_prfm_time_evolution(
+        _time_series(),
+        late_summary,
+        evolution,
+        cmap=cmap,
+        norm=norm,
+        time_bounds=(200.0, 600.0),
+        average_bounds=(400.0, 600.0),
+        dpi=50,
+    )
     assert delta.stat().st_size > 0
     assert vertical.stat().st_size > 0
     assert vertical_total_gas.stat().st_size > 0
+    assert evolution.stat().st_size > 0
     assert balance.stat().st_size > 0
     assert components.stat().st_size > 0
 

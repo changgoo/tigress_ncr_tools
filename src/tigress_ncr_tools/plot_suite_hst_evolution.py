@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot SFR-colored time evolution of suite-wide history diagnostics."""
+"""Plot parameter-colored time evolution of suite-wide history diagnostics."""
 
 import argparse
 import csv
@@ -16,6 +16,8 @@ from .plot_suite_evolution import (
     DEFAULT_SFR_RANGE,
     rank_models_by_sfr,
 )
+from .plot_suite_hst import input_parameter
+from .surface_density_stats import read_shear_parameters
 
 
 DEFAULT_SUITE = Path("/tigress/changgoo/anvil/TIGRESS-NCR-suite")
@@ -23,6 +25,16 @@ DEFAULT_OUTPUT_NAME = "hst_evolution"
 DEFAULT_FIGURE_NAME = "velocity_dispersions"
 DEFAULT_TIME_RANGE = (0.0, 600.0)
 DEFAULT_CMAP = "plasma"
+HISTORY_PARAMETER_COLOR_SPECS = (
+    ("omega", "log", "viridis", r"$\Omega\ [{\rm Myr}^{-1}]$"),
+    (
+        "stellar_midplane_density",
+        "log",
+        "cividis",
+        r"$\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
+    ),
+    ("qshear", "linear", "magma", r"$q$"),
+)
 
 # key, panel title, whole-history energy/pressure field, multiplicative factor
 SPEED_QUANTITIES = (
@@ -88,10 +100,7 @@ def characteristic_speed(numerator, mass, factor=1.0):
         raise ValueError("numerator and mass must have matching shapes")
     result = np.full(numerator.shape, np.nan, dtype=float)
     valid = (
-        np.isfinite(numerator)
-        & np.isfinite(mass)
-        & (numerator >= 0.0)
-        & (mass > 0.0)
+        np.isfinite(numerator) & np.isfinite(mass) & (numerator >= 0.0) & (mass > 0.0)
     )
     result[valid] = np.sqrt(factor * numerator[valid] / mass[valid])
     return result
@@ -107,6 +116,25 @@ def history_speeds(history):
     return {
         key: characteristic_speed(history[field], mass, factor)
         for key, _, field, factor in SPEED_QUANTITIES
+    }
+
+
+def model_history_parameters(model):
+    """Return parameters used for alternate history-track colors."""
+    _, qshear, omega = read_shear_parameters(model)
+    stellar_surface_density = input_parameter(Path(model), "SurfS")
+    stellar_scale_height = input_parameter(Path(model), "zstar")
+    values = (omega, stellar_surface_density, stellar_scale_height, qshear)
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"nonfinite history color parameters for {model}")
+    if stellar_scale_height <= 0.0:
+        raise ValueError(f"non-positive stellar scale height for {model}")
+    return {
+        "omega": float(omega),
+        "stellar_midplane_density": float(
+            stellar_surface_density / (2.0 * stellar_scale_height)
+        ),
+        "qshear": float(qshear),
     }
 
 
@@ -166,6 +194,7 @@ def plot_velocity_evolution(
     history_samples=4000,
     cmap_name=DEFAULT_CMAP,
     color_scale="log",
+    colorbar_label=None,
     yscale="linear",
     dpi=180,
 ):
@@ -190,17 +219,13 @@ def plot_velocity_evolution(
 
     speed_min = np.inf
     speed_max = -np.inf
-    # Draw low-SFR models first so the high-SFR tracks remain visible.
-    for model, model_sfr in reversed(ranked):
+    # Draw low-value models first so high-value tracks remain visible.
+    for model, color_value in reversed(ranked):
         history = read_hst(whole_history_file(model), max_rows=history_samples)
         time = np.asarray(history["time"], dtype=float)
-        use = (
-            np.isfinite(time)
-            & (time >= time_bounds[0])
-            & (time <= time_bounds[1])
-        )
+        use = np.isfinite(time) & (time >= time_bounds[0]) & (time <= time_bounds[1])
         speeds = history_speeds(history)
-        color = cmap(norm(model_sfr))
+        color = cmap(norm(color_value))
         for axis, (key, _, _, _) in zip(plot_axes, SPEED_QUANTITIES):
             values = speeds[key][use]
             finite = values[np.isfinite(values)]
@@ -221,9 +246,7 @@ def plot_velocity_evolution(
         common_ylim = (speed_min / 1.15, speed_max * 1.15)
     else:
         common_ylim = (0.0, speed_max * 1.05)
-    for index, (axis, (_, title, _, _)) in enumerate(
-        zip(plot_axes, SPEED_QUANTITIES)
-    ):
+    for index, (axis, (_, title, _, _)) in enumerate(zip(plot_axes, SPEED_QUANTITIES)):
         axis.set_title(title, fontsize=11)
         axis.set_xlim(time_bounds)
         axis.set_ylim(common_ylim)
@@ -241,10 +264,12 @@ def plot_velocity_evolution(
 
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     colorbar = fig.colorbar(scalar, cax=color_axis)
-    colorbar.set_label(
-        rf"$\langle\Sigma_{{\rm SFR,10}}\rangle_{{{sfr_bounds[0]:g}-{sfr_bounds[1]:g}}}$ "
-        r"$[M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}]$"
-    )
+    if colorbar_label is None:
+        colorbar_label = (
+            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle_{{{sfr_bounds[0]:g}-{sfr_bounds[1]:g}}}$ "
+            r"$[M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}]$"
+        )
+    colorbar.set_label(colorbar_label)
     color_axis.set_title(f"{len(ranked)} models", fontsize=10)
     fig.suptitle("Whole-domain mass-weighted characteristic speeds", fontsize=14)
     fig.text(
@@ -283,7 +308,7 @@ def render_history_evolution(
     yscale="linear",
     dpi=180,
 ):
-    """Rank models by mean SFR and write the first history-evolution product."""
+    """Rank models by mean SFR and write all history-evolution products."""
     suite = Path(suite).expanduser()
     output_dir = Path(output_dir) if output_dir else suite / DEFAULT_OUTPUT_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +336,25 @@ def render_history_evolution(
     )
     print(f"Wrote {png}")
     print(f"Wrote {output_dir / 'model_sfr_colors.csv'}")
+    parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
+    for field, scale, parameter_cmap, colorbar_label in HISTORY_PARAMETER_COLOR_SPECS:
+        parameter_ranked = [
+            (model, parameters[model.name][field]) for model, _ in ranked
+        ]
+        parameter_png = output_dir / f"{DEFAULT_FIGURE_NAME}_color_by_{field}.png"
+        plot_velocity_evolution(
+            parameter_ranked,
+            parameter_png,
+            time_bounds=time_bounds,
+            sfr_bounds=sfr_bounds,
+            history_samples=history_samples,
+            cmap_name=parameter_cmap,
+            color_scale=scale,
+            colorbar_label=colorbar_label,
+            yscale=yscale,
+            dpi=dpi,
+        )
+        print(f"Wrote {parameter_png}")
     return png, ranked
 
 
