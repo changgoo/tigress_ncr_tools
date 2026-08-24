@@ -14,6 +14,7 @@ from tigress_ncr_tools.plot_suite_density_spectrum import (
     overdensity_power,
     plot_spectrum_diagnostic_relations,
     plot_time_mean_spectrum,
+    spectrum_time_diagnostics,
     spectral_slope_alpha,
     time_mean_power,
 )
@@ -85,6 +86,23 @@ def test_spectral_slope_uses_requested_wavelength_interval():
     assert alpha == pytest.approx(2.5)
 
 
+def test_diagnostics_are_measured_for_every_instantaneous_spectrum():
+    edges = np.geomspace(2.0 * np.pi / 800.0, 2.0 * np.pi / 40.0, 41)
+    k = np.sqrt(edges[:-1] * edges[1:])
+    data = {
+        "k_edges": edges,
+        "k_centers": k,
+        "pixel_size_pc": np.array([4.0]),
+        "power_delta": np.array([[3.0 * k**-2.0, 5.0 * k**-3.0]]),
+    }
+    diagnostics = spectrum_time_diagnostics(data)
+    assert diagnostics["integral_scale_time_pc"].shape == (1, 2)
+    np.testing.assert_allclose(
+        diagnostics["spectral_slope_alpha_time"], [[2.0, 3.0]]
+    )
+    assert np.all(diagnostics["slope_fit_bin_count_time"] >= 3)
+
+
 def test_corrupted_row0000_is_removed_from_every_model_axis():
     data = {
         "model": np.array(["row0001", "R8_8pc_NCR_row0000", "row0002"]),
@@ -106,6 +124,10 @@ def test_spectrum_diagnostic_relation_figure(tmp_path):
             "omega": [0.02, 0.04],
             "integral_scale_pc": [280.0, 390.0],
             "spectral_slope_alpha": [2.2, 2.4],
+            "integral_scale_time_mean_pc": [275.0, 385.0],
+            "integral_scale_time_std_pc": [25.0, 35.0],
+            "spectral_slope_alpha_time_mean": [2.15, 2.35],
+            "spectral_slope_alpha_time_std": [0.12, 0.18],
         }
     )
     output = tmp_path / "diagnostics.png"

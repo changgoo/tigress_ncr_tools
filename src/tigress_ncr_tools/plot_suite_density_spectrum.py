@@ -382,14 +382,63 @@ def exclude_corrupted_archive_models(data, excluded=EXCLUDED_MODELS):
     return filtered, removed
 
 
+def spectrum_time_diagnostics(data):
+    """Measure integral scale and fitted slope for every instantaneous spectrum."""
+    power = np.asarray(data["power_delta"], dtype=float)
+    if power.ndim != 3:
+        raise ValueError("power_delta must have model, time, and k dimensions")
+    k_edges = np.asarray(data["k_edges"], dtype=float)
+    k = np.asarray(data["k_centers"], dtype=float)
+    if power.shape[2] != k.size or k_edges.size != k.size + 1:
+        raise ValueError("spectrum k coordinates do not match power_delta")
+    if "pixel_size_pc" in data:
+        pixel_size = np.asarray(data["pixel_size_pc"], dtype=float)
+    else:
+        pixel_size = np.full(power.shape[0], np.pi / k_edges[-1])
+    if pixel_size.ndim == 0:
+        pixel_size = np.full(power.shape[0], float(pixel_size))
+    if pixel_size.shape != (power.shape[0],):
+        raise ValueError("pixel_size_pc must be scalar or have one value per model")
+
+    scales = np.full(power.shape[:2], np.nan)
+    slopes = np.full(power.shape[:2], np.nan)
+    fit_counts = np.zeros(power.shape[:2], dtype=int)
+    for model_index in range(power.shape[0]):
+        for time_index in range(power.shape[1]):
+            scale = integral_scale(k_edges, power[model_index, time_index])
+            slope, fit_count = spectral_slope_alpha(
+                k,
+                power[model_index, time_index],
+                pixel_size[model_index],
+                scale,
+            )
+            scales[model_index, time_index] = scale
+            slopes[model_index, time_index] = slope
+            fit_counts[model_index, time_index] = fit_count
+    return {
+        "integral_scale_time_pc": scales,
+        "spectral_slope_alpha_time": slopes,
+        "slope_fit_bin_count_time": fit_counts,
+    }
+
+
+def _finite_mean_std(values):
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return np.nan, np.nan, 0
+    return float(np.mean(finite)), float(np.std(finite)), int(finite.size)
+
+
 def spectrum_diagnostic_summary(
     data,
     ranked,
     *,
     bounds=DEFAULT_SFR_RANGE,
     model_parameters=None,
+    time_diagnostics=None,
 ):
-    """Return one integral scale and fitted spectral slope per clean model."""
+    """Summarize mean-spectrum and instantaneous diagnostics per clean model."""
     names = np.asarray(data["model"]).astype(str)
     expected = np.asarray([model.name for model, _ in ranked])
     if not np.array_equal(names, expected):
@@ -398,18 +447,30 @@ def spectrum_diagnostic_summary(
         model_parameters = {
             model.name: model_history_parameters(model) for model, _ in ranked
         }
-    power = time_mean_power(data, bounds)
+    mean_power = time_mean_power(data, bounds)
+    if time_diagnostics is None:
+        time_diagnostics = spectrum_time_diagnostics(data)
     k_edges = np.asarray(data["k_edges"], dtype=float)
     k = np.asarray(data["k_centers"], dtype=float)
+    time = np.asarray(data["time"], dtype=float)
+    if time.ndim == 1:
+        time = np.broadcast_to(time, mean_power.shape[:1] + time.shape)
     if "pixel_size_pc" in data:
         pixel_size = np.asarray(data["pixel_size_pc"], dtype=float)
     else:
         pixel_size = np.full(names.size, np.pi / k_edges[-1])
     rows = []
     for index, name in enumerate(names):
-        scale = integral_scale(k_edges, power[index])
-        alpha, fit_count = spectral_slope_alpha(
-            k, power[index], pixel_size[index], scale
+        mean_spectrum_scale = integral_scale(k_edges, mean_power[index])
+        mean_spectrum_alpha, mean_spectrum_fit_count = spectral_slope_alpha(
+            k, mean_power[index], pixel_size[index], mean_spectrum_scale
+        )
+        use = (time[index] >= bounds[0]) & (time[index] <= bounds[1])
+        scale_mean, scale_std, scale_count = _finite_mean_std(
+            time_diagnostics["integral_scale_time_pc"][index, use]
+        )
+        alpha_mean, alpha_std, alpha_count = _finite_mean_std(
+            time_diagnostics["spectral_slope_alpha_time"][index, use]
         )
         parameters = model_parameters[name]
         rows.append(
@@ -422,11 +483,17 @@ def spectrum_diagnostic_summary(
                 ),
                 "qshear": float(parameters["qshear"]),
                 "pixel_size_pc": float(pixel_size[index]),
-                "integral_scale_pc": scale,
-                "spectral_slope_alpha": alpha,
-                "slope_fit_bin_count": fit_count,
+                "integral_scale_time_mean_pc": scale_mean,
+                "integral_scale_time_std_pc": scale_std,
+                "integral_scale_time_count": scale_count,
+                "spectral_slope_alpha_time_mean": alpha_mean,
+                "spectral_slope_alpha_time_std": alpha_std,
+                "spectral_slope_alpha_time_count": alpha_count,
+                "integral_scale_pc": mean_spectrum_scale,
+                "spectral_slope_alpha": mean_spectrum_alpha,
+                "slope_fit_bin_count": mean_spectrum_fit_count,
                 "slope_fit_lambda_min_pc": 10.0 * float(pixel_size[index]),
-                "slope_fit_lambda_max_pc": scale,
+                "slope_fit_lambda_max_pc": mean_spectrum_scale,
                 "average_start": float(bounds[0]),
                 "average_stop": float(bounds[1]),
             }
@@ -434,7 +501,7 @@ def spectrum_diagnostic_summary(
     return pd.DataFrame(rows)
 
 
-def attach_spectrum_diagnostics(data, summary):
+def attach_spectrum_diagnostics(data, summary, time_diagnostics):
     """Return an archive copy augmented with per-model spectrum diagnostics."""
     augmented = dict(data)
     columns = (
@@ -442,6 +509,12 @@ def attach_spectrum_diagnostics(data, summary):
         "omega",
         "stellar_midplane_density",
         "qshear",
+        "integral_scale_time_mean_pc",
+        "integral_scale_time_std_pc",
+        "integral_scale_time_count",
+        "spectral_slope_alpha_time_mean",
+        "spectral_slope_alpha_time_std",
+        "spectral_slope_alpha_time_count",
         "integral_scale_pc",
         "spectral_slope_alpha",
         "slope_fit_bin_count",
@@ -450,6 +523,7 @@ def attach_spectrum_diagnostics(data, summary):
     )
     for column in columns:
         augmented[column] = summary[column].to_numpy()
+    augmented.update(time_diagnostics)
     augmented["diagnostic_time_bounds"] = (
         summary[["average_start", "average_stop"]].iloc[0].to_numpy(dtype=float)
     )
@@ -458,6 +532,10 @@ def attach_spectrum_diagnostics(data, summary):
     )
     augmented["spectral_slope_definition"] = np.asarray(
         "P_delta(k) proportional to k^-alpha for 10*pixel_size < 2pi/k < L_in"
+    )
+    augmented["time_diagnostic_statistic_definition"] = np.asarray(
+        "arithmetic mean and population standard deviation of finite "
+        "instantaneous measurements within diagnostic_time_bounds"
     )
     augmented["excluded_models"] = np.asarray(sorted(EXCLUDED_MODELS))
     if "box_size_pc" not in augmented:
@@ -496,13 +574,41 @@ def plot_spectrum_diagnostic_relations(
     cmap, norm = sfr_colormap(color_values, cmap_name, color_scale)
     x = summary["mean_sfr10"].to_numpy(dtype=float)
     specifications = (
-        ("integral_scale_pc", r"$L_{\rm in}\ [{\rm pc}]$"),
-        ("spectral_slope_alpha", r"$\alpha\quad(P_\delta\propto k^{-\alpha})$"),
+        (
+            "integral_scale_time_mean_pc",
+            "integral_scale_time_std_pc",
+            r"$L_{\rm in}\ [{\rm pc}]$",
+        ),
+        (
+            "spectral_slope_alpha_time_mean",
+            "spectral_slope_alpha_time_std",
+            r"$\alpha\quad(P_\delta\propto k^{-\alpha})$",
+        ),
     )
     fig, axes = plt.subplots(1, 2, figsize=(11.8, 5.2), sharex=True)
-    for axis, (field, ylabel) in zip(axes, specifications):
+    for axis, (field, scatter_field, ylabel) in zip(axes, specifications):
         y = summary[field].to_numpy(dtype=float)
-        valid = np.isfinite(x) & (x > 0.0) & np.isfinite(y)
+        y_scatter = summary[scatter_field].to_numpy(dtype=float)
+        valid = (
+            np.isfinite(x)
+            & (x > 0.0)
+            & np.isfinite(y)
+            & np.isfinite(y_scatter)
+            & (y_scatter >= 0.0)
+        )
+        for x_value, y_value, scatter, color_value in zip(
+            x[valid], y[valid], y_scatter[valid], color_values[valid]
+        ):
+            axis.errorbar(
+                x_value,
+                y_value,
+                yerr=scatter,
+                color=cmap(norm(color_value)),
+                alpha=0.58,
+                linewidth=1.0,
+                capsize=2.0,
+                zorder=1,
+            )
         axis.scatter(
             x[valid],
             y[valid],
@@ -512,6 +618,7 @@ def plot_spectrum_diagnostic_relations(
             s=42,
             edgecolor="black",
             linewidth=0.4,
+            zorder=2,
         )
         axis.set_xscale("log")
         axis.set_xlabel(
@@ -529,7 +636,7 @@ def plot_spectrum_diagnostic_relations(
     colorbar.set_label(colorbar_label)
     fig.suptitle(
         "Gas-column density integral scale and spectral slope "
-        "(200--600 Myr mean spectrum)",
+        r"(200--600 Myr instantaneous mean $\pm 1\sigma$)",
         fontsize=13,
     )
     fig.subplots_adjust(left=0.09, right=0.98, bottom=0.31, top=0.88, wspace=0.24)
@@ -770,13 +877,15 @@ def render_suite_density_spectrum(
             output=archive,
         )
     parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
+    time_diagnostics = spectrum_time_diagnostics(data)
     diagnostic_summary = spectrum_diagnostic_summary(
         data,
         ranked,
         bounds=sfr_bounds,
         model_parameters=parameters,
+        time_diagnostics=time_diagnostics,
     )
-    data = attach_spectrum_diagnostics(data, diagnostic_summary)
+    data = attach_spectrum_diagnostics(data, diagnostic_summary, time_diagnostics)
     _atomic_savez(archive, **data)
     print(f"Wrote {archive}", flush=True)
     diagnostic_csv = output_dir / f"{DEFAULT_DIAGNOSTIC_NAME}.csv"

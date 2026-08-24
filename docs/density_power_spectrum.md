@@ -208,8 +208,9 @@ dark purple.
 
 ## 7. Integral scale and spectral slope
 
-The model diagnostics are calculated from the 200--600 Myr mean dimensional
-spectrum. Define the one-dimensional shell energy spectrum
+The diagnostics are calculated independently for every instantaneous
+dimensional spectrum \(P_\delta(k,t)\) from 0 through 600 Myr. Define the
+one-dimensional shell energy spectrum at each time
 
 \[
 E(k)=\frac{kP_\delta(k)}{2\pi},
@@ -217,8 +218,8 @@ E(k)=\frac{kP_\delta(k)}{2\pi},
 \langle\delta^2\rangle=\int E(k)\,dk.
 \]
 
-The integral scale is the energy-weighted physical wavelength requested for
-this analysis:
+The instantaneous integral scale is the energy-weighted physical wavelength
+requested for this analysis:
 
 \[
 L_{\rm in}=\frac{\displaystyle\int E(k)\frac{2\pi}{k}\,dk}
@@ -261,9 +262,30 @@ bins whose physical wavelength satisfies
 10\Delta x < \lambda=\frac{2\pi}{k} < L_{\rm in}.
 \]
 
-The limits are strict. At least three finite positive bins are required;
-otherwise `spectral_slope_alpha` is stored as `NaN`. The production suite has
-11--16 fitted bins per model.
+The limits are strict and use the instantaneous \(L_{\rm in}(t)\). At least
+three finite positive bins are required; otherwise the instantaneous slope is
+stored as `NaN`.
+
+For the SFR-relation figures, the plotted point and vertical error bar are
+
+\[
+\left\langle X(t)\right\rangle_{200-600},
+\qquad
+\sigma_X=\sqrt{\left\langle
+[X(t)-\langle X(t)\rangle_{200-600}]^2
+\right\rangle_{200-600}},
+\]
+
+where \(X\) is either \(L_{\rm in}\) or \(\alpha\). Only finite instantaneous
+measurements enter the arithmetic mean and population standard deviation. The
+CSV and archive record the number of accepted measurements for each statistic.
+
+For comparison with the original analysis, the code also computes
+\(L_{\rm in}\) and \(\alpha\) once from the 200--600 Myr mean spectrum. These
+are retained in `integral_scale_pc` and `spectral_slope_alpha`, but they are no
+longer the values displayed in the SFR-relation figures. In general,
+diagnosing the mean spectrum is not equivalent to averaging diagnostics of
+the instantaneous spectra.
 
 ## 8. Contents of `density_power_spectra.npz`
 
@@ -295,14 +317,24 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `box_size_pc` | `(Nm,)` or scalar | Transverse size \(L=\min(L_x,L_y)\) used for \(kL/(2\pi)\), in pc. Migrated archives store the common suite value as a scalar. |
 | `omega` | `(Nm,)` | Orbital frequency used for diagnostic colors. |
 | `stellar_midplane_density` | `(Nm,)` | \(\Sigma_*/(2H_*)\) in \(M_\odot\,{\rm pc}^{-3}\). |
-| `integral_scale_pc` | `(Nm,)` | \(L_{\rm in}\) from the 200--600 Myr mean spectrum, in pc. |
-| `spectral_slope_alpha` | `(Nm,)` | Positive \(\alpha\) in \(P_\delta\) proportional to \(k^{-\alpha}\). |
-| `slope_fit_bin_count` | `(Nm,)` | Number of bins in the slope fit. |
+| `integral_scale_time_pc` | `(Nm,Nt)` | Instantaneous \(L_{\rm in}(t)\) in pc. |
+| `spectral_slope_alpha_time` | `(Nm,Nt)` | Instantaneous positive fitted slope \(\alpha(t)\). |
+| `slope_fit_bin_count_time` | `(Nm,Nt)` | Number of bins in each instantaneous slope fit. |
+| `integral_scale_time_mean_pc` | `(Nm,)` | Temporal mean of finite instantaneous \(L_{\rm in}\) measurements over 200--600 Myr. |
+| `integral_scale_time_std_pc` | `(Nm,)` | Temporal population standard deviation of instantaneous \(L_{\rm in}\). |
+| `integral_scale_time_count` | `(Nm,)` | Number of finite instantaneous \(L_{\rm in}\) measurements entering the statistics. |
+| `spectral_slope_alpha_time_mean` | `(Nm,)` | Temporal mean of finite instantaneous \(\alpha\) measurements over 200--600 Myr. |
+| `spectral_slope_alpha_time_std` | `(Nm,)` | Temporal population standard deviation of instantaneous \(\alpha\). |
+| `spectral_slope_alpha_time_count` | `(Nm,)` | Number of finite instantaneous \(\alpha\) measurements entering the statistics. |
+| `integral_scale_pc` | `(Nm,)` | Reference \(L_{\rm in}\) measured from the 200--600 Myr mean spectrum, in pc. |
+| `spectral_slope_alpha` | `(Nm,)` | Reference \(\alpha\) measured from the 200--600 Myr mean spectrum. |
+| `slope_fit_bin_count` | `(Nm,)` | Number of bins in the reference mean-spectrum slope fit. |
 | `slope_fit_lambda_min_pc` | `(Nm,)` | Lower fit wavelength \(10\Delta x\), in pc. |
 | `slope_fit_lambda_max_pc` | `(Nm,)` | Upper fit wavelength \(L_{\rm in}\), in pc. |
-| `diagnostic_time_bounds` | `(2,)` | Time bounds of the mean spectrum used for \(L_{\rm in}\) and \(\alpha\). |
+| `diagnostic_time_bounds` | `(2,)` | Time bounds used for the temporal statistics and reference mean spectrum. |
 | `integral_scale_definition` | scalar | Stored text definition of the integral scale. |
 | `spectral_slope_definition` | scalar | Stored text definition of the slope and fit interval. |
+| `time_diagnostic_statistic_definition` | scalar | Stored definition of the instantaneous temporal mean and scatter. |
 | `parameter_source` | `(Nm,)` | Batch script or `athinput*` file supplying \(q\) and \(\Omega\). |
 | `window` | scalar | Window choice: `none`, `hann`, or `tukey`. |
 | `tukey_alpha` | scalar | Tukey-window taper fraction, retained even for other window choices. |
@@ -325,10 +357,14 @@ The default output directory is
   \(t=200\)--600 mean dimensional and dimensionless spectra. The lower axis
   is \(kL/(2\pi)\), and the upper axis is \(\lambda=2\pi/k\) in pc.
 - `density_power_spectrum_integral_scale_slope.csv`: one row per clean model
-  containing SFR, \(\Omega\), \(\Sigma_*/(2H_*)\), \(q\), \(L_{\rm in}\),
-  \(\alpha\), pixel size, fit limits, fit-bin count, and averaging bounds.
+  containing SFR, \(\Omega\), \(\Sigma_*/(2H_*)\), \(q\), the temporal means
+  and standard deviations of \(L_{\rm in}(t)\) and \(\alpha(t)\), accepted
+  sample counts, reference mean-spectrum measurements, pixel size, fit limits,
+  fit-bin count, and averaging bounds.
 - `density_power_spectrum_integral_scale_slope.png`: \(L_{\rm in}\) and
-  \(\alpha\) versus mean SFR, colored by mean SFR with `plasma`.
+  \(\alpha\) versus mean SFR. Points show the 200--600 Myr temporal means,
+  vertical bars show one standard deviation, and colors use mean SFR with
+  `plasma`.
 - The same two-panel scatter figure with `_color_by_omega`,
   `_color_by_stellar_midplane_density`, and `_color_by_qshear` suffixes,
   using `viridis`, `cividis`, and `magma`, respectively.

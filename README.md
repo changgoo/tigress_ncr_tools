@@ -130,6 +130,12 @@ and `magma` for SFR, orbital frequency, stellar midplane density, and shear.
 Spectrum figures use `kL/(2*pi)` on the lower axis and the corresponding
 physical wavelength `lambda=2*pi/k` in pc on the upper axis.
 
+`L_in` and `alpha` are measured separately for every 1-Myr spectrum. Their
+SFR-relation points show the 200--600 Myr temporal mean, with one temporal
+standard deviation as a vertical error bar. The archive stores the full time
+series and also retains the older diagnostics measured from the mean spectrum
+for comparison.
+
 ```bash
 plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 
