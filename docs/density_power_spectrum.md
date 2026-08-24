@@ -166,6 +166,37 @@ the lower mode-number axis.
 Optional zero padding evaluates the same windowed transform on a finer Fourier
 grid. It does not add spatial resolution or independent modes.
 
+### 4.1 Two-stage 2D and 1D workflow
+
+The production calculation is split into two explicit stages. First, each
+projection is remapped and transformed once, and its full periodogram
+\(P_{2\rm D}(k_{x,0},k_y,t)\) is saved. Second, the collective suite archive is
+constructed by reading those saved arrays, mapping every mode to
+
+\[
+k_x(t)=k_{x,0}+s(t)k_y,
+\qquad
+k(t)=\sqrt{k_x(t)^2+k_y^2},
+\]
+
+and applying the annular estimator above. The projection maps are therefore
+not reread when changing the radial binning or adding diagnostics based on the
+2D Fourier geometry.
+
+Each clean model stores one complete time-series archive at
+`proj2d/theta0/density_power_2d/density_power_2d.npz`. Its principal fields
+are:
+
+- `power_2d`, with shape `(601,Ny,Nx)` and storage type `float32`;
+- `kx0` and `ky`, the unsheared FFT coordinates in `pc^-1`;
+- `time`, `target_time`, `remap_time`, and the residual `shear`;
+- the source projection path, map mean, negative-pixel flag, pixel spacing,
+  box size, \(q\), \(\Omega\), window, padding, and normalization metadata.
+
+The stored coordinate pair is deliberately \((k_{x,0},k_y)\), because the
+physical \(k_x\) is time dependent. Any 2D visualization or anisotropy
+measurement must apply the stored shear before interpreting orientation.
+
 ## 5. Dimensionless variance spectrum
 
 With the continuous Fourier convention corresponding to the estimator above,
@@ -343,6 +374,8 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `spectral_slope_definition` | scalar | Stored text definition of the slope and fit interval. |
 | `time_diagnostic_statistic_definition` | scalar | Stored definition of the temporal mean, standard deviation, median, and percentiles. |
 | `parameter_source` | `(Nm,)` | Batch script or `athinput*` file supplying \(q\) and \(\Omega\). |
+| `power2d_archive` | `(Nm,)` | Path to each model's cached 2D periodogram series. |
+| `power2d_storage_dtype` | scalar | Storage type of the cached 2D power arrays; currently `float32`. |
 | `window` | scalar | Window choice: `none`, `hann`, or `tukey`. |
 | `tukey_alpha` | scalar | Tukey-window taper fraction, retained even for other window choices. |
 | `pad_factor` | scalar | Linear zero-padding factor. |
@@ -412,3 +445,65 @@ The default output directory is
 - The annular spectrum compresses directional information. An anisotropic
   two-dimensional spectrum or separate \((k_x,k_y)\) diagnostics would be
   required to study preferred directions directly.
+
+## 11. Recommended anisotropy diagnostics
+
+The cached 2D spectra make anisotropy measurements possible without rereading
+maps. The preferred primary statistic is the scale-dependent complex
+quadrupole in physical Fourier coordinates. For modes in radial bin \(a\), let
+\(\phi=\arctan(k_y/k_x)\) and define
+
+\[
+Q_2(k_a) \equiv
+\frac{\sum_{j\in a}P_j\exp(2i\phi_j)}{\sum_{j\in a}P_j}.
+\]
+
+Its magnitude \(A_2(k)=|Q_2(k)|\) ranges from zero for angularly isotropic
+power toward unity for power concentrated along one axis. The preferred
+physical-wavevector direction is
+
+\[
+\phi_2(k) \equiv \frac{1}{2}\arg Q_2(k).
+\]
+
+The factor of two is appropriate because the power of a real field is
+unchanged under \(\boldsymbol{k}\) to \(-\boldsymbol{k}\). This statistic is
+compact, rotationally well defined, and naturally scale dependent.
+
+A complementary integrated diagnostic is the power-weighted angular tensor
+
+\[
+M_{ij} \equiv
+\frac{\sum_n P_n\,\widehat{k}_{i,n}\widehat{k}_{j,n}}
+     {\sum_nP_n}.
+\]
+
+If its eigenvalues satisfy \(\lambda_1\geq\lambda_2\), define
+
+\[
+A_T \equiv \frac{\lambda_1-\lambda_2}{\lambda_1+\lambda_2}.
+\]
+
+The principal eigenvector supplies an easily visualized preferred direction.
+This tensor is effectively a band-integrated quadrupole and is useful for one
+number per time and model.
+
+For interpretability, a third diagnostic can compare power in fixed wedges
+around the radial and azimuthal Fourier axes. A ratio such as
+\(P_{|k_x|}/P_{|k_y|}\), using identical angular widths, is intuitive but
+depends on the chosen wedge angle; it is best treated as a cross-check rather
+than the primary statistic.
+
+Recommended implementation order:
+
+1. calculate \(A_2(k,t)\) and \(\phi_2(k,t)\) in the same radial bins as the
+   1D spectrum;
+2. integrate the angular tensor over the slope-fit wavelength interval
+   \(10\Delta x<\lambda<L_{\rm in}(t)\);
+3. summarize each statistic over 200--600 Myr with its median and
+   16th--84th percentiles;
+4. add radial-versus-azimuthal wedge ratios only as a diagnostic of the
+   quadrupole interpretation.
+
+All of these calculations must use \(k_x=k_{x,0}+s(t)k_y\), not the stored
+unsheared \(k_{x,0}\).

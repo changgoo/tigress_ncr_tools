@@ -237,17 +237,15 @@ def _padded_shape(shape, pad_factor):
     return tuple(max(old, int(np.ceil(old * factor))) for old in shape)
 
 
-def angle_averaged_power(
+def power_spectral_density_2d(
     fluctuation,
     dx,
     dy,
-    shear,
-    k_edges,
     window="none",
     tukey_alpha=0.25,
     pad_factor=1.0,
 ):
-    """Calculate an annular PSD using physical shearing-wave wavenumbers.
+    """Return the normalized 2D periodogram and unsheared FFT coordinates.
 
     The two-dimensional normalization is
     ``P_2D = |dx dy FFT(w f)|^2 / (dx dy sum(w^2))``. Thus P has units
@@ -269,6 +267,18 @@ def angle_averaged_power(
 
     ky = 2.0 * np.pi * np.fft.fftfreq(padded_shape[0], d=float(dy))
     kx0 = 2.0 * np.pi * np.fft.fftfreq(padded_shape[1], d=float(dx))
+    return power_2d, kx0, ky
+
+
+def annular_average_power_2d(power_2d, kx0, ky, shear, k_edges):
+    """Annularly average a 2D PSD using physical shearing-wave wavenumbers."""
+    power_2d = np.asarray(power_2d, dtype=float)
+    kx0 = np.asarray(kx0, dtype=float)
+    ky = np.asarray(ky, dtype=float)
+    if power_2d.shape != (ky.size, kx0.size):
+        raise ValueError("power_2d shape must match ky and kx0")
+    if not np.all(np.isfinite(power_2d)) or np.any(power_2d < 0.0):
+        raise ValueError("power_2d must be finite and nonnegative")
     kx_physical = kx0[None, :] + float(shear) * ky[:, None]
     kmag = np.sqrt(kx_physical**2 + ky[:, None] ** 2)
 
@@ -286,6 +296,28 @@ def angle_averaged_power(
     radial = np.full(edges.size - 1, np.nan)
     np.divide(total, count, out=radial, where=count > 0)
     return radial, count
+
+
+def angle_averaged_power(
+    fluctuation,
+    dx,
+    dy,
+    shear,
+    k_edges,
+    window="none",
+    tukey_alpha=0.25,
+    pad_factor=1.0,
+):
+    """Calculate an annular PSD using physical shearing-wave wavenumbers."""
+    power_2d, kx0, ky = power_spectral_density_2d(
+        fluctuation,
+        dx,
+        dy,
+        window=window,
+        tukey_alpha=tukey_alpha,
+        pad_factor=pad_factor,
+    )
+    return annular_average_power_2d(power_2d, kx0, ky, shear, k_edges)
 
 
 def default_k_edges(x_centers, y_centers, bins=DEFAULT_K_BINS):

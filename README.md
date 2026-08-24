@@ -116,6 +116,13 @@ wavenumber with `kx = kx0 + q*Omega*t_remap*ky`. Runtime `problem/qshear` and
 template values. Corrupted `R8_8pc_NCR_row0000` projections are excluded from
 the archive and every derived product.
 
+The transform is now a two-stage pipeline. Each model first stores its complete
+601-snapshot 2D periodogram series under
+`proj2d/theta0/density_power_2d/density_power_2d.npz`; the collective 1D
+spectra and all radial diagnostics are then reduced from those caches. Use
+`--workers N` for model-level parallel generation and `--overwrite-2d` only
+when the projection maps or transform settings change.
+
 The mathematical definition, discrete normalization, shear-coordinate
 derivation, and archive-field inventory are documented in
 [`docs/density_power_spectrum.md`](docs/density_power_spectrum.md).
@@ -144,6 +151,29 @@ plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 # Recompute the archive and every movie frame after source projections change.
 plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite \
   --overwrite --movie
+```
+
+## Suite density PDFs
+
+`plot-suite-density-pdf` measures area-weighted one-point PDFs of
+`delta=Sigma/<Sigma>-1` and `s=ln(Sigma/<Sigma>)` for every clean 1-Myr theta0
+map. It stores instantaneous pixel standard deviations and summarizes them
+over 200--600 Myr with medians and 16th--84th percentile bars. A 2-by-3 figure
+correlates both widths with epicyclic frequency, stellar midplane density, and
+mean SFR. A companion 2-by-7 figure compares the same widths with the three
+mass-weighted kinetic dispersions, thermal speed, and three Alfvén speeds from
+the whole-domain histories, using 200--600 Myr medians and percentile bars.
+
+The output directory `SUITE/density_pdf_theta0/` also contains all-model median
+PDFs and a 4-by-8 grid comparing each median `s`-PDF with its moment-matched
+Gaussian, corresponding to a log-normal column-density model. Definitions and
+archive fields are documented in
+[`docs/density_pdf.md`](docs/density_pdf.md).
+The two-panel median-PDF figure automatically removes empty far-tail ranges
+below a PDF-density envelope of `1e-4`.
+
+```bash
+plot-suite-density-pdf /tigress/changgoo/anvil/TIGRESS-NCR-suite --workers 4
 ```
 
 ## Suite PRFM diagnostics

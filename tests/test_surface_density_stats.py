@@ -7,9 +7,11 @@ matplotlib.use("Agg")
 import tigress_ncr_tools.surface_density_stats as stats
 from tigress_ncr_tools.surface_density_stats import (
     angle_averaged_power,
+    annular_average_power_2d,
     centered_subregion,
     pdfs_fluctuations,
     pdfs_log10_sigma,
+    power_spectral_density_2d,
     plot_pdf_summary,
     plot_power_summary,
     read_shear_parameters,
@@ -91,6 +93,21 @@ def test_power_uses_physical_shearing_wavevector():
     peak = int(np.nanargmax(power))
     assert edges[peak] <= expected_k < edges[peak + 1]
     assert count[peak] > 0
+
+
+def test_stored_2d_power_reduces_to_original_annular_spectrum():
+    rng = np.random.default_rng(17)
+    fluctuation = rng.normal(size=(16, 24))
+    edges = np.geomspace(0.1, np.pi, 12)
+    direct, direct_count = angle_averaged_power(
+        fluctuation, 1.0, 1.5, 0.3, edges
+    )
+    power_2d, kx0, ky = power_spectral_density_2d(fluctuation, 1.0, 1.5)
+    reduced, reduced_count = annular_average_power_2d(
+        power_2d, kx0, ky, 0.3, edges
+    )
+    np.testing.assert_allclose(reduced, direct, equal_nan=True)
+    np.testing.assert_array_equal(reduced_count, direct_count)
 
 
 def test_area_and_mass_weighted_sigma_delta_and_s_pdfs():

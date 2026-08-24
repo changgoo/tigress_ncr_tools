@@ -2,6 +2,7 @@
 """Build shear-aware gas-column overdensity spectra for an NCR suite."""
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import matplotlib as mpl
@@ -27,8 +28,9 @@ from .plot_suite_hst_evolution import (
     write_model_colors,
 )
 from .surface_density_stats import (
-    angle_averaged_power,
+    annular_average_power_2d,
     default_k_edges,
+    power_spectral_density_2d,
     read_shear_parameters,
     residual_shear,
     shear_remap_periodic,
@@ -44,6 +46,8 @@ DEFAULT_TIME_RANGE = (0, 600)
 EXCLUDED_MODELS = frozenset({"R8_8pc_NCR_row0000"})
 DEFAULT_DIAGNOSTIC_NAME = "density_power_spectrum_integral_scale_slope"
 DEFAULT_CORRELATION_NAME = "density_power_spectrum_correlations"
+POWER2D_DIRECTORY = "density_power_2d"
+POWER2D_ARCHIVE_NAME = "density_power_2d.npz"
 DIAGNOSTIC_COLOR_SPECS = (
     (
         "mean_sfr10",
@@ -54,6 +58,60 @@ DIAGNOSTIC_COLOR_SPECS = (
     ),
     *HISTORY_PARAMETER_COLOR_SPECS,
 )
+
+
+def overdensity_power_2d(
+    frame,
+    qshear,
+    omega,
+    *,
+    window="none",
+    tukey_alpha=0.25,
+    pad_factor=1.0,
+):
+    """Return the shear-remapped 2D PSD of ``Sigma/<Sigma> - 1``.
+
+    The map is first transformed to periodic shearing coordinates. Fourier
+    modes are then assigned their instantaneous physical wavenumbers through
+    ``kx = kx0 + q Omega t_remap ky`` before annular averaging.
+    """
+    if not np.isclose(frame["theta"], 0.0):
+        raise ValueError("density power spectra currently require theta0")
+    sigma = np.asarray(frame["fields"]["nH"], dtype=float)
+    if sigma.ndim != 2 or not np.all(np.isfinite(sigma)):
+        raise ValueError("surface density must be a finite 2D array")
+
+    x = np.asarray(frame["x_centers"], dtype=float)
+    lx = float(frame["x_edges"][-1] - frame["x_edges"][0])
+    ly = float(frame["y_edges"][-1] - frame["y_edges"][0])
+    remap_time, shear = residual_shear(frame["time"], qshear, omega, lx, ly)
+    remapped = shear_remap_periodic(sigma, x, frame["y_spacing"], shear)
+    mean_sigma = float(np.mean(remapped))
+    if not np.isfinite(mean_sigma) or mean_sigma <= 0.0:
+        raise ValueError("surface-density mean must be finite and positive")
+    delta = remapped / mean_sigma - 1.0
+    power_2d, kx0, ky = power_spectral_density_2d(
+        delta,
+        frame["x_spacing"],
+        frame["y_spacing"],
+        window=window,
+        tukey_alpha=tukey_alpha,
+        pad_factor=pad_factor,
+    )
+    return {
+        "power_2d": power_2d,
+        "kx0": kx0,
+        "ky": ky,
+        "mean_sigma": mean_sigma,
+        "remap_time": remap_time,
+        "shear": shear,
+        "has_negative_sigma": bool(np.any(sigma < 0.0)),
+        "box_size": min(lx, ly),
+        "box_size_xy": np.asarray([lx, ly]),
+        "pixel_size_xy": np.asarray(
+            [float(frame["x_spacing"]), float(frame["y_spacing"])]
+        ),
+    }
 
 
 def overdensity_power(
@@ -67,50 +125,30 @@ def overdensity_power(
     tukey_alpha=0.25,
     pad_factor=1.0,
 ):
-    """Return the shear-aware spectrum of ``Sigma/<Sigma> - 1`` for one map.
-
-    The map is first transformed to periodic shearing coordinates. Fourier
-    modes are then assigned their instantaneous physical wavenumbers through
-    ``kx = kx0 + q Omega t_remap ky`` before annular averaging.
-    """
-    if not np.isclose(frame["theta"], 0.0):
-        raise ValueError("density power spectra currently require theta0")
-    sigma = np.asarray(frame["fields"]["nH"], dtype=float)
-    if sigma.ndim != 2 or not np.all(np.isfinite(sigma)):
-        raise ValueError("surface density must be a finite 2D array")
-
-    x = np.asarray(frame["x_centers"], dtype=float)
-    y = np.asarray(frame["y_centers"], dtype=float)
-    lx = float(frame["x_edges"][-1] - frame["x_edges"][0])
-    ly = float(frame["y_edges"][-1] - frame["y_edges"][0])
-    remap_time, shear = residual_shear(frame["time"], qshear, omega, lx, ly)
-    remapped = shear_remap_periodic(sigma, x, frame["y_spacing"], shear)
-    mean_sigma = float(np.mean(remapped))
-    if not np.isfinite(mean_sigma) or mean_sigma <= 0.0:
-        raise ValueError("surface-density mean must be finite and positive")
-    delta = remapped / mean_sigma - 1.0
-    if k_edges is None:
-        k_edges = default_k_edges(x, y, bins=k_bins)
-    power, count = angle_averaged_power(
-        delta,
-        frame["x_spacing"],
-        frame["y_spacing"],
-        shear,
-        k_edges,
+    """Return a shear-aware annular spectrum through the explicit 2D PSD."""
+    result = overdensity_power_2d(
+        frame,
+        qshear,
+        omega,
         window=window,
         tukey_alpha=tukey_alpha,
         pad_factor=pad_factor,
     )
-    return {
-        "power": power,
-        "mode_count": count,
-        "k_edges": np.asarray(k_edges),
-        "mean_sigma": mean_sigma,
-        "remap_time": remap_time,
-        "shear": shear,
-        "has_negative_sigma": bool(np.any(sigma < 0.0)),
-        "box_size": min(lx, ly),
-    }
+    if k_edges is None:
+        k_edges = default_k_edges(
+            frame["x_centers"], frame["y_centers"], bins=k_bins
+        )
+    power, count = annular_average_power_2d(
+        result["power_2d"], result["kx0"], result["ky"], result["shear"], k_edges
+    )
+    result.update(
+        {
+            "power": power,
+            "mode_count": count,
+            "k_edges": np.asarray(k_edges),
+        }
+    )
+    return result
 
 
 def _atomic_savez(path, **data):
@@ -119,6 +157,180 @@ def _atomic_savez(path, **data):
     with temporary.open("wb") as stream:
         np.savez_compressed(stream, **data)
     temporary.replace(path)
+
+
+def model_power2d_archive(model, proj_id="theta0"):
+    """Return the per-model archive path for the 2D spectrum time series."""
+    return Path(model) / "proj2d" / proj_id / POWER2D_DIRECTORY / POWER2D_ARCHIVE_NAME
+
+
+def _power2d_archive_matches(data, targets, window, tukey_alpha, pad_factor):
+    """Return whether a cached 2D series matches the requested configuration."""
+    return (
+        np.array_equal(np.asarray(data.get("target_time")), np.asarray(targets))
+        and str(np.asarray(data.get("window", "")).item()) == str(window)
+        and np.isclose(float(np.asarray(data.get("tukey_alpha", np.nan))), tukey_alpha)
+        and np.isclose(float(np.asarray(data.get("pad_factor", np.nan))), pad_factor)
+    )
+
+
+def _power2d_file_matches(path, targets, window, tukey_alpha, pad_factor):
+    """Check 2D-cache metadata without loading the large power array."""
+    try:
+        with np.load(path) as saved:
+            metadata = {
+                key: saved[key]
+                for key in ("target_time", "window", "tukey_alpha", "pad_factor")
+            }
+    except (OSError, KeyError, ValueError):
+        return False
+    return _power2d_archive_matches(
+        metadata, targets, window, tukey_alpha, pad_factor
+    )
+
+
+def generate_model_power2d(
+    model,
+    *,
+    proj_id,
+    targets,
+    window,
+    tukey_alpha,
+    pad_factor,
+    output,
+):
+    """Read projection maps and write one model's complete 2D PSD series."""
+    parameter_path, qshear, omega = read_shear_parameters(model)
+    index = projection_number_index(model, proj_id)
+    guess_offset = 0
+    rows = []
+    common_kx0 = common_ky = None
+    pixel_size_xy = box_size_xy = None
+    for frame_index, target in enumerate(targets, start=1):
+        path, stored_time, guess_offset = nearest_indexed_projection(
+            index, float(target), guess_offset, tolerance=0.05
+        )
+        frame = read_proj2d(path, fields="nH")
+        result = overdensity_power_2d(
+            frame,
+            qshear,
+            omega,
+            window=window,
+            tukey_alpha=tukey_alpha,
+            pad_factor=pad_factor,
+        )
+        if common_kx0 is None:
+            common_kx0 = result["kx0"]
+            common_ky = result["ky"]
+            pixel_size_xy = result["pixel_size_xy"]
+            box_size_xy = result["box_size_xy"]
+        elif not (
+            np.array_equal(common_kx0, result["kx0"])
+            and np.array_equal(common_ky, result["ky"])
+            and np.allclose(pixel_size_xy, result["pixel_size_xy"])
+            and np.allclose(box_size_xy, result["box_size_xy"])
+        ):
+            raise ValueError(f"2D spectrum grid changes within {model}")
+        rows.append(
+            (
+                stored_time,
+                str(path),
+                result["power_2d"].astype(np.float32),
+                result["mean_sigma"],
+                result["remap_time"],
+                result["shear"],
+                result["has_negative_sigma"],
+            )
+        )
+        if frame_index == 1 or frame_index % 100 == 0 or frame_index == len(targets):
+            print(f"{model.name}: {frame_index}/{len(targets)} 2D spectra", flush=True)
+    data = {
+        "model": np.asarray(model.name),
+        "projection_id": np.asarray(proj_id),
+        "field": np.asarray("nH"),
+        "delta_definition": np.asarray("Sigma/<Sigma>-1"),
+        "coordinate_remap": np.asarray("g(x,y)=Sigma(x,y-shear*x)"),
+        "wavenumber_mapping": np.asarray("kx=kx0+shear*ky"),
+        "power_normalization": np.asarray(
+            "|dx dy FFT(delta)|^2 / (dx dy sum(window^2))"
+        ),
+        "power_unit": np.asarray("pc^2"),
+        "k_unit": np.asarray("pc^-1"),
+        "target_time": np.asarray(targets),
+        "time": np.asarray([row[0] for row in rows]),
+        "source_projection": np.asarray([row[1] for row in rows]),
+        "power_2d": np.asarray([row[2] for row in rows]),
+        "kx0": common_kx0,
+        "ky": common_ky,
+        "mean_sigma_code": np.asarray([row[3] for row in rows]),
+        "remap_time": np.asarray([row[4] for row in rows]),
+        "shear": np.asarray([row[5] for row in rows]),
+        "has_negative_sigma": np.asarray([row[6] for row in rows]),
+        "qshear": np.asarray(qshear),
+        "omega_kms_per_pc": np.asarray(omega),
+        "pixel_size_xy_pc": pixel_size_xy,
+        "box_size_xy_pc": box_size_xy,
+        "parameter_source": np.asarray(str(parameter_path)),
+        "window": np.asarray(window),
+        "tukey_alpha": np.asarray(tukey_alpha),
+        "pad_factor": np.asarray(pad_factor),
+    }
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_savez(output, **data)
+    print(f"Wrote {output}", flush=True)
+    return data
+
+
+def load_or_generate_model_power2d(
+    model,
+    *,
+    proj_id,
+    targets,
+    window,
+    tukey_alpha,
+    pad_factor,
+    overwrite=False,
+):
+    """Load a compatible per-model 2D PSD series or generate it from maps."""
+    output = model_power2d_archive(model, proj_id)
+    if output.exists() and not overwrite:
+        if _power2d_file_matches(output, targets, window, tukey_alpha, pad_factor):
+            print(f"Loading existing {output}", flush=True)
+            return load_spectrum_archive(output)
+        print(f"Regenerating incompatible {output}", flush=True)
+    return generate_model_power2d(
+        model,
+        proj_id=proj_id,
+        targets=targets,
+        window=window,
+        tukey_alpha=tukey_alpha,
+        pad_factor=pad_factor,
+        output=output,
+    )
+
+
+def _ensure_model_power2d(task):
+    """Worker entry point that creates a cache if it is absent or stale."""
+    model, proj_id, targets, window, tukey_alpha, pad_factor, overwrite = task
+    output = model_power2d_archive(model, proj_id)
+    if (
+        output.exists()
+        and not overwrite
+        and _power2d_file_matches(output, targets, window, tukey_alpha, pad_factor)
+    ):
+        print(f"Keeping compatible {output}", flush=True)
+        return str(output)
+    generate_model_power2d(
+        model,
+        proj_id=proj_id,
+        targets=targets,
+        window=window,
+        tukey_alpha=tukey_alpha,
+        pad_factor=pad_factor,
+        output=output,
+    )
+    return str(output)
 
 
 def analyze_suite_power(
@@ -132,14 +344,34 @@ def analyze_suite_power(
     window="none",
     tukey_alpha=0.25,
     pad_factor=1.0,
+    overwrite_2d=False,
+    workers=1,
     output=None,
 ):
-    """Calculate and optionally cache ``P_delta(t,k)`` for every model."""
+    """Generate/load 2D PSD series, then annularly reduce every model."""
     if proj_id != "theta0":
         raise ValueError("shear-aware density spectra currently require theta0")
     targets = np.arange(int(start), int(stop) + 1, int(stride), dtype=int)
     if targets.size == 0:
         raise ValueError("the requested time range contains no outputs")
+
+    generation_tasks = [
+        (
+            model,
+            proj_id,
+            targets,
+            window,
+            tukey_alpha,
+            pad_factor,
+            overwrite_2d,
+        )
+        for model, _ in ranked
+    ]
+    if int(workers) == 1:
+        generated_paths = [_ensure_model_power2d(task) for task in generation_tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=int(workers)) as executor:
+            generated_paths = list(executor.map(_ensure_model_power2d, generation_tasks))
 
     model_names = []
     mean_sfr = []
@@ -155,86 +387,52 @@ def analyze_suite_power(
     all_pixel_size = []
     all_box_size = []
     parameter_sources = []
+    power2d_archives = []
     common_k_edges = None
 
-    for model_index, (model, model_sfr) in enumerate(ranked, start=1):
-        parameter_path, qshear, omega = read_shear_parameters(model)
-        index = projection_number_index(model, proj_id)
-        guess_offset = 0
-        times = []
+    for model_index, ((model, model_sfr), generated_path) in enumerate(
+        zip(ranked, generated_paths), start=1
+    ):
+        two_dimensional = load_spectrum_archive(generated_path)
+        pixel_size_xy = np.asarray(two_dimensional["pixel_size_xy_pc"], dtype=float)
+        box_size_xy = np.asarray(two_dimensional["box_size_xy_pc"], dtype=float)
+        if common_k_edges is None:
+            kmin = 2.0 * np.pi / np.min(box_size_xy)
+            kmax = np.pi / np.max(pixel_size_xy)
+            common_k_edges = np.geomspace(kmin, kmax, int(k_bins) + 1)
         powers = []
         counts = []
-        means = []
-        remap_times = []
-        shears = []
-        negative = []
-        pixel_size = None
-        box_size = None
-        for frame_index, target in enumerate(targets, start=1):
-            path, stored_time, guess_offset = nearest_indexed_projection(
-                index,
-                float(target),
-                guess_offset,
-                tolerance=0.05,
+        for time_index, shear in enumerate(two_dimensional["shear"]):
+            power, count = annular_average_power_2d(
+                two_dimensional["power_2d"][time_index],
+                two_dimensional["kx0"],
+                two_dimensional["ky"],
+                shear,
+                common_k_edges,
             )
-            frame = read_proj2d(path, fields="nH")
-            if not np.isclose(frame["time"], stored_time):
-                raise ValueError(f"metadata time changed while reading {path}")
-            result = overdensity_power(
-                frame,
-                qshear,
-                omega,
-                k_edges=common_k_edges,
-                k_bins=k_bins,
-                window=window,
-                tukey_alpha=tukey_alpha,
-                pad_factor=pad_factor,
-            )
-            if common_k_edges is None:
-                common_k_edges = result["k_edges"]
-            current_pixel_size = max(
-                float(frame["x_spacing"]), float(frame["y_spacing"])
-            )
-            if pixel_size is None:
-                pixel_size = current_pixel_size
-            elif not np.isclose(pixel_size, current_pixel_size):
-                raise ValueError(f"projection grid spacing changes within {model}")
-            if box_size is None:
-                box_size = result["box_size"]
-            elif not np.isclose(box_size, result["box_size"]):
-                raise ValueError(f"projection box size changes within {model}")
-            times.append(stored_time)
-            powers.append(result["power"])
-            counts.append(result["mode_count"])
-            means.append(result["mean_sigma"])
-            remap_times.append(result["remap_time"])
-            shears.append(result["shear"])
-            negative.append(result["has_negative_sigma"])
-            if (
-                frame_index == 1
-                or frame_index % 100 == 0
-                or frame_index == len(targets)
-            ):
-                print(
-                    f"{model.name}: {frame_index}/{len(targets)} "
-                    f"({model_index}/{len(ranked)} models)",
-                    flush=True,
-                )
+            powers.append(power)
+            counts.append(count)
+        print(
+            f"{model.name}: reduced {len(targets)} 2D spectra "
+            f"({model_index}/{len(ranked)} models)",
+            flush=True,
+        )
 
         model_names.append(model.name)
         mean_sfr.append(model_sfr)
-        all_time.append(times)
+        all_time.append(two_dimensional["time"])
         all_power.append(powers)
         all_count.append(counts)
-        all_mean_sigma.append(means)
-        all_remap_time.append(remap_times)
-        all_shear.append(shears)
-        all_negative.append(negative)
-        all_qshear.append(qshear)
-        all_omega.append(omega)
-        all_pixel_size.append(pixel_size)
-        all_box_size.append(box_size)
-        parameter_sources.append(str(parameter_path))
+        all_mean_sigma.append(two_dimensional["mean_sigma_code"])
+        all_remap_time.append(two_dimensional["remap_time"])
+        all_shear.append(two_dimensional["shear"])
+        all_negative.append(two_dimensional["has_negative_sigma"])
+        all_qshear.append(float(two_dimensional["qshear"]))
+        all_omega.append(float(two_dimensional["omega_kms_per_pc"]))
+        all_pixel_size.append(float(np.max(pixel_size_xy)))
+        all_box_size.append(float(np.min(box_size_xy)))
+        parameter_sources.append(str(np.asarray(two_dimensional["parameter_source"]).item()))
+        power2d_archives.append(str(model_power2d_archive(model, proj_id)))
 
     time = np.asarray(all_time)
     if np.any(np.ptp(time, axis=0) > 0.05):
@@ -278,6 +476,8 @@ def analyze_suite_power(
         "pixel_size_pc": np.asarray(all_pixel_size),
         "box_size_pc": np.asarray(all_box_size),
         "parameter_source": np.asarray(parameter_sources),
+        "power2d_archive": np.asarray(power2d_archives),
+        "power2d_storage_dtype": np.asarray("float32"),
         "window": np.asarray(window),
         "tukey_alpha": np.asarray(tukey_alpha),
         "pad_factor": np.asarray(pad_factor),
@@ -981,6 +1181,8 @@ def render_suite_density_spectrum(
     cmap_name=DEFAULT_CMAP,
     dpi=180,
     overwrite=False,
+    overwrite_2d=False,
+    workers=1,
     movie=False,
     fps=30.0,
 ):
@@ -995,8 +1197,19 @@ def render_suite_density_spectrum(
     ]
     ranked = rank_models_by_sfr(models, bounds=sfr_bounds, max_rows=10000)
     archive = output_dir / DEFAULT_ARCHIVE_NAME
+    missing_power2d = [
+        model_power2d_archive(model, proj_id)
+        for model, _ in ranked
+        if not model_power2d_archive(model, proj_id).exists()
+    ]
+    rebuild_reduction = overwrite or overwrite_2d or bool(missing_power2d)
+    if missing_power2d:
+        print(
+            f"Generating {len(missing_power2d)} missing per-model 2D PSD archives",
+            flush=True,
+        )
     removed = ()
-    if archive.exists() and not overwrite:
+    if archive.exists() and not rebuild_reduction:
         print(f"Loading existing {archive}", flush=True)
         data = load_spectrum_archive(archive)
         data, removed = exclude_corrupted_archive_models(data)
@@ -1018,6 +1231,8 @@ def render_suite_density_spectrum(
             window=window,
             tukey_alpha=tukey_alpha,
             pad_factor=pad_factor,
+            overwrite_2d=overwrite_2d,
+            workers=workers,
             output=archive,
         )
     parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
@@ -1079,7 +1294,7 @@ def render_suite_density_spectrum(
             cmap_name=cmap_name,
             dpi=max(72, int(round(dpi * 0.78))),
             fps=fps,
-            overwrite=overwrite or bool(removed) or movie_stale,
+            overwrite=overwrite or overwrite_2d or bool(removed) or movie_stale,
         )
         _atomic_text(expected_manifest, movie_manifest)
     return data, ranked
@@ -1103,13 +1318,15 @@ def main(argv=None):
     parser.add_argument("--cmap", default=DEFAULT_CMAP)
     parser.add_argument("--dpi", type=int, default=180)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--overwrite-2d", action="store_true")
+    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--movie", action="store_true")
     parser.add_argument("--fps", type=float, default=30.0)
     args = parser.parse_args(argv)
     if args.start < 0 or args.stop < args.start:
         parser.error("require 0 <= --start <= --stop")
-    if args.stride <= 0 or args.k_bins <= 0:
-        parser.error("--stride and --k-bins must be positive")
+    if args.stride <= 0 or args.k_bins <= 0 or args.workers <= 0:
+        parser.error("--stride, --k-bins, and --workers must be positive")
     if args.sfr_stop <= args.sfr_start:
         parser.error("--sfr-stop must be greater than --sfr-start")
     if not 0.0 <= args.tukey_alpha <= 1.0:
@@ -1134,6 +1351,8 @@ def main(argv=None):
         cmap_name=args.cmap,
         dpi=args.dpi,
         overwrite=args.overwrite,
+        overwrite_2d=args.overwrite_2d,
+        workers=args.workers,
         movie=args.movie,
         fps=args.fps,
     )
