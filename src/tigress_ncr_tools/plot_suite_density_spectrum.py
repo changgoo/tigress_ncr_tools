@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from pathena.proj2d_reader import read_proj2d
 
@@ -18,9 +19,13 @@ from .plot_suite_evolution import (
     nearest_indexed_projection,
     projection_number_index,
     rank_models_by_sfr,
-    short_model_name,
 )
-from .plot_suite_hst_evolution import sfr_colormap, write_model_colors
+from .plot_suite_hst_evolution import (
+    HISTORY_PARAMETER_COLOR_SPECS,
+    model_history_parameters,
+    sfr_colormap,
+    write_model_colors,
+)
 from .surface_density_stats import (
     angle_averaged_power,
     default_k_edges,
@@ -36,6 +41,18 @@ DEFAULT_ARCHIVE_NAME = "density_power_spectra.npz"
 DEFAULT_CMAP = "plasma"
 DEFAULT_K_BINS = 40
 DEFAULT_TIME_RANGE = (0, 600)
+EXCLUDED_MODELS = frozenset({"R8_8pc_NCR_row0000"})
+DEFAULT_DIAGNOSTIC_NAME = "density_power_spectrum_integral_scale_slope"
+DIAGNOSTIC_COLOR_SPECS = (
+    (
+        "mean_sfr10",
+        "log",
+        "plasma",
+        r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+        r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
+    ),
+    *HISTORY_PARAMETER_COLOR_SPECS,
+)
 
 
 def overdensity_power(
@@ -91,6 +108,7 @@ def overdensity_power(
         "remap_time": remap_time,
         "shear": shear,
         "has_negative_sigma": bool(np.any(sigma < 0.0)),
+        "box_size": min(lx, ly),
     }
 
 
@@ -133,6 +151,8 @@ def analyze_suite_power(
     all_negative = []
     all_qshear = []
     all_omega = []
+    all_pixel_size = []
+    all_box_size = []
     parameter_sources = []
     common_k_edges = None
 
@@ -147,6 +167,8 @@ def analyze_suite_power(
         remap_times = []
         shears = []
         negative = []
+        pixel_size = None
+        box_size = None
         for frame_index, target in enumerate(targets, start=1):
             path, stored_time, guess_offset = nearest_indexed_projection(
                 index,
@@ -169,6 +191,17 @@ def analyze_suite_power(
             )
             if common_k_edges is None:
                 common_k_edges = result["k_edges"]
+            current_pixel_size = max(
+                float(frame["x_spacing"]), float(frame["y_spacing"])
+            )
+            if pixel_size is None:
+                pixel_size = current_pixel_size
+            elif not np.isclose(pixel_size, current_pixel_size):
+                raise ValueError(f"projection grid spacing changes within {model}")
+            if box_size is None:
+                box_size = result["box_size"]
+            elif not np.isclose(box_size, result["box_size"]):
+                raise ValueError(f"projection box size changes within {model}")
             times.append(stored_time)
             powers.append(result["power"])
             counts.append(result["mode_count"])
@@ -176,7 +209,11 @@ def analyze_suite_power(
             remap_times.append(result["remap_time"])
             shears.append(result["shear"])
             negative.append(result["has_negative_sigma"])
-            if frame_index == 1 or frame_index % 100 == 0 or frame_index == len(targets):
+            if (
+                frame_index == 1
+                or frame_index % 100 == 0
+                or frame_index == len(targets)
+            ):
                 print(
                     f"{model.name}: {frame_index}/{len(targets)} "
                     f"({model_index}/{len(ranked)} models)",
@@ -194,12 +231,16 @@ def analyze_suite_power(
         all_negative.append(negative)
         all_qshear.append(qshear)
         all_omega.append(omega)
+        all_pixel_size.append(pixel_size)
+        all_box_size.append(box_size)
         parameter_sources.append(str(parameter_path))
 
     time = np.asarray(all_time)
     if np.any(np.ptp(time, axis=0) > 0.05):
         bad = np.flatnonzero(np.ptp(time, axis=0) > 0.05)
-        raise ValueError(f"models are not time-aligned at target indices {bad.tolist()}")
+        raise ValueError(
+            f"models are not time-aligned at target indices {bad.tolist()}"
+        )
     power = np.asarray(all_power)
     count = np.asarray(all_count)
     data = {
@@ -233,6 +274,8 @@ def analyze_suite_power(
         "has_negative_sigma": np.asarray(all_negative),
         "qshear": np.asarray(all_qshear),
         "omega_kms_per_pc": np.asarray(all_omega),
+        "pixel_size_pc": np.asarray(all_pixel_size),
+        "box_size_pc": np.asarray(all_box_size),
         "parameter_source": np.asarray(parameter_sources),
         "window": np.asarray(window),
         "tukey_alpha": np.asarray(tukey_alpha),
@@ -281,6 +324,220 @@ def time_mean_power(data, bounds=DEFAULT_SFR_RANGE):
     return result
 
 
+def integral_scale(k_edges, power):
+    """Return the energy-weighted wavelength integral scale in parsecs."""
+    edges = np.asarray(k_edges, dtype=float)
+    power = np.asarray(power, dtype=float)
+    if edges.ndim != 1 or power.shape != (edges.size - 1,):
+        raise ValueError("power must match the one-dimensional k-bin edges")
+    if np.any(np.diff(edges) <= 0.0):
+        raise ValueError("k-bin edges must be strictly increasing")
+    k = np.sqrt(edges[:-1] * edges[1:])
+    dk = np.diff(edges)
+    valid = np.isfinite(power) & (power > 0.0) & np.isfinite(k) & (k > 0.0)
+    if not np.any(valid):
+        return np.nan
+    energy = k[valid] * power[valid] / (2.0 * np.pi)
+    denominator = np.sum(energy * dk[valid])
+    numerator = np.sum(energy * (2.0 * np.pi / k[valid]) * dk[valid])
+    if not np.isfinite(denominator) or denominator <= 0.0:
+        return np.nan
+    return float(numerator / denominator)
+
+
+def spectral_slope_alpha(k, power, pixel_size, scale):
+    """Fit ``P_delta proportional to k^-alpha`` for 10 dx < lambda < scale."""
+    k = np.asarray(k, dtype=float)
+    power = np.asarray(power, dtype=float)
+    wavelength = 2.0 * np.pi / k
+    valid = (
+        np.isfinite(k)
+        & (k > 0.0)
+        & np.isfinite(power)
+        & (power > 0.0)
+        & (wavelength > 10.0 * float(pixel_size))
+        & (wavelength < float(scale))
+    )
+    count = int(np.count_nonzero(valid))
+    if count < 3:
+        return np.nan, count
+    slope, _ = np.polyfit(np.log(k[valid]), np.log(power[valid]), 1)
+    return float(-slope), count
+
+
+def exclude_corrupted_archive_models(data, excluded=EXCLUDED_MODELS):
+    """Return an archive copy with excluded models removed on the model axis."""
+    names = np.asarray(data["model"]).astype(str)
+    keep = np.asarray([name not in excluded for name in names], dtype=bool)
+    removed = tuple(names[~keep])
+    if not removed:
+        return dict(data), removed
+    filtered = {}
+    for key, value in data.items():
+        array = np.asarray(value)
+        if array.ndim >= 1 and array.shape[0] == names.size:
+            filtered[key] = array[keep]
+        else:
+            filtered[key] = array
+    return filtered, removed
+
+
+def spectrum_diagnostic_summary(
+    data,
+    ranked,
+    *,
+    bounds=DEFAULT_SFR_RANGE,
+    model_parameters=None,
+):
+    """Return one integral scale and fitted spectral slope per clean model."""
+    names = np.asarray(data["model"]).astype(str)
+    expected = np.asarray([model.name for model, _ in ranked])
+    if not np.array_equal(names, expected):
+        raise ValueError("archive and ranked model ordering differ")
+    if model_parameters is None:
+        model_parameters = {
+            model.name: model_history_parameters(model) for model, _ in ranked
+        }
+    power = time_mean_power(data, bounds)
+    k_edges = np.asarray(data["k_edges"], dtype=float)
+    k = np.asarray(data["k_centers"], dtype=float)
+    if "pixel_size_pc" in data:
+        pixel_size = np.asarray(data["pixel_size_pc"], dtype=float)
+    else:
+        pixel_size = np.full(names.size, np.pi / k_edges[-1])
+    rows = []
+    for index, name in enumerate(names):
+        scale = integral_scale(k_edges, power[index])
+        alpha, fit_count = spectral_slope_alpha(
+            k, power[index], pixel_size[index], scale
+        )
+        parameters = model_parameters[name]
+        rows.append(
+            {
+                "model": name,
+                "mean_sfr10": float(data["mean_sfr10"][index]),
+                "omega": float(parameters["omega"]),
+                "stellar_midplane_density": float(
+                    parameters["stellar_midplane_density"]
+                ),
+                "qshear": float(parameters["qshear"]),
+                "pixel_size_pc": float(pixel_size[index]),
+                "integral_scale_pc": scale,
+                "spectral_slope_alpha": alpha,
+                "slope_fit_bin_count": fit_count,
+                "slope_fit_lambda_min_pc": 10.0 * float(pixel_size[index]),
+                "slope_fit_lambda_max_pc": scale,
+                "average_start": float(bounds[0]),
+                "average_stop": float(bounds[1]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def attach_spectrum_diagnostics(data, summary):
+    """Return an archive copy augmented with per-model spectrum diagnostics."""
+    augmented = dict(data)
+    columns = (
+        "pixel_size_pc",
+        "omega",
+        "stellar_midplane_density",
+        "qshear",
+        "integral_scale_pc",
+        "spectral_slope_alpha",
+        "slope_fit_bin_count",
+        "slope_fit_lambda_min_pc",
+        "slope_fit_lambda_max_pc",
+    )
+    for column in columns:
+        augmented[column] = summary[column].to_numpy()
+    augmented["diagnostic_time_bounds"] = (
+        summary[["average_start", "average_stop"]].iloc[0].to_numpy(dtype=float)
+    )
+    augmented["integral_scale_definition"] = np.asarray(
+        "integral(E(k)*2pi/k dk)/integral(E(k) dk), E(k)=k*P_delta(k)/(2pi)"
+    )
+    augmented["spectral_slope_definition"] = np.asarray(
+        "P_delta(k) proportional to k^-alpha for 10*pixel_size < 2pi/k < L_in"
+    )
+    augmented["excluded_models"] = np.asarray(sorted(EXCLUDED_MODELS))
+    if "box_size_pc" not in augmented:
+        augmented["box_size_pc"] = np.asarray(
+            2.0 * np.pi / np.asarray(augmented["k_edges"], dtype=float)[0]
+        )
+    return augmented
+
+
+def _atomic_csv(frame, path):
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp")
+    frame.to_csv(temporary, index=False)
+    temporary.replace(path)
+
+
+def _atomic_text(text, path):
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(text)
+    temporary.replace(path)
+
+
+def plot_spectrum_diagnostic_relations(
+    summary,
+    output,
+    *,
+    color_field="mean_sfr10",
+    cmap_name="plasma",
+    color_scale="log",
+    colorbar_label=None,
+    dpi=180,
+):
+    """Plot integral scale and spectral slope against mean SFR."""
+    color_values = summary[color_field].to_numpy(dtype=float)
+    cmap, norm = sfr_colormap(color_values, cmap_name, color_scale)
+    x = summary["mean_sfr10"].to_numpy(dtype=float)
+    specifications = (
+        ("integral_scale_pc", r"$L_{\rm in}\ [{\rm pc}]$"),
+        ("spectral_slope_alpha", r"$\alpha\quad(P_\delta\propto k^{-\alpha})$"),
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(11.8, 5.2), sharex=True)
+    for axis, (field, ylabel) in zip(axes, specifications):
+        y = summary[field].to_numpy(dtype=float)
+        valid = np.isfinite(x) & (x > 0.0) & np.isfinite(y)
+        axis.scatter(
+            x[valid],
+            y[valid],
+            c=color_values[valid],
+            cmap=cmap,
+            norm=norm,
+            s=42,
+            edgecolor="black",
+            linewidth=0.4,
+        )
+        axis.set_xscale("log")
+        axis.set_xlabel(
+            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+        )
+        axis.set_ylabel(ylabel)
+        axis.grid(alpha=0.18, which="both")
+        axis.tick_params(direction="in", top=True, right=True)
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = fig.add_axes((0.35, 0.13, 0.30, 0.026))
+    colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    if colorbar_label is None:
+        colorbar_label = DIAGNOSTIC_COLOR_SPECS[0][3]
+    colorbar.set_label(colorbar_label)
+    fig.suptitle(
+        "Gas-column density integral scale and spectral slope "
+        "(200--600 Myr mean spectrum)",
+        fontsize=13,
+    )
+    fig.subplots_adjust(left=0.09, right=0.98, bottom=0.31, top=0.88, wspace=0.24)
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {output}", flush=True)
+
+
 def create_spectrum_figure(
     k,
     power,
@@ -291,9 +548,24 @@ def create_spectrum_figure(
     norm,
     power_limits,
     dimensionless_limits,
+    box_size,
 ):
     """Create the two-panel dimensional and dimensionless spectrum figure."""
-    fig = plt.figure(figsize=(12.6, 5.7))
+    box_size = float(box_size)
+    if not np.isfinite(box_size) or box_size <= 0.0:
+        raise ValueError("box_size must be finite and positive")
+    mode = np.asarray(k, dtype=float) * box_size / (2.0 * np.pi)
+
+    def reciprocal_scale(value):
+        value = np.asarray(value, dtype=float)
+        return np.divide(
+            box_size,
+            value,
+            out=np.full_like(value, np.inf),
+            where=value != 0.0,
+        )
+
+    fig = plt.figure(figsize=(12.6, 6.2))
     grid = fig.add_gridspec(2, 2, height_ratios=(1.0, 0.055), hspace=0.30)
     axes = [fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])]
     color_axis = fig.add_subplot(grid[1, :])
@@ -303,10 +575,10 @@ def create_spectrum_figure(
         color = cmap(norm(mean_sfr))
         valid = np.isfinite(power[index]) & (power[index] > 0.0)
         first = axes[0].plot(
-            k[valid], power[index, valid], color=color, linewidth=1.0, alpha=0.82
+            mode[valid], power[index, valid], color=color, linewidth=1.0, alpha=0.82
         )[0]
         second = axes[1].plot(
-            k[valid],
+            mode[valid],
             k[valid] ** 2 * power[index, valid] / (2.0 * np.pi),
             color=color,
             linewidth=1.0,
@@ -318,10 +590,24 @@ def create_spectrum_figure(
     for axis in axes:
         axis.set_xscale("log")
         axis.set_yscale("log")
-        axis.set_xlim(float(k[0]), float(k[-1]))
-        axis.set_xlabel(r"physical wavenumber $k\;[\mathrm{pc}^{-1}]$")
+        axis.set_xlim(float(mode[0]), float(mode[-1]))
+        axis.set_xlabel(r"dimensionless wavenumber $kL/(2\pi)$")
         axis.grid(alpha=0.18, which="both")
         axis.tick_params(direction="in", top=True, right=True)
+        top_axis = axis.secondary_xaxis(
+            "top",
+            functions=(reciprocal_scale, reciprocal_scale),
+        )
+        top_axis.set_xlabel(r"wavelength $\lambda=2\pi/k\;[\mathrm{pc}]$")
+        wavelength_limits = reciprocal_scale(np.asarray([mode[-1], mode[0]]))
+        tick_exponents = np.arange(
+            np.ceil(np.log2(wavelength_limits[0])),
+            np.floor(np.log2(wavelength_limits[1])) + 1.0,
+        )
+        wavelength_ticks = 2.0**tick_exponents
+        top_axis.set_xticks(wavelength_ticks)
+        top_axis.set_xticklabels([f"{tick:g}" for tick in wavelength_ticks])
+        top_axis.tick_params(direction="in")
     # Apply explicit limits after selecting log scales so a uniform first frame
     # cannot leave either axis at Matplotlib's empty-data defaults.
     axes[0].set_ylim(power_limits)
@@ -332,8 +618,8 @@ def create_spectrum_figure(
         r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
         r"$[M_\odot\,\mathrm{kpc}^{-2}\,\mathrm{yr}^{-1}]$"
     )
-    title_text = fig.suptitle(title, fontsize=13)
-    fig.subplots_adjust(left=0.075, right=0.985, bottom=0.13, top=0.90, wspace=0.20)
+    title_text = fig.suptitle(title, fontsize=13, y=0.985)
+    fig.subplots_adjust(left=0.075, right=0.985, bottom=0.13, top=0.81, wspace=0.20)
     return fig, axes, lines, title_text
 
 
@@ -344,6 +630,7 @@ def plot_time_mean_spectrum(data, ranked, output, *, cmap_name=DEFAULT_CMAP, dpi
     mean_sfr = np.asarray(data["mean_sfr10"])
     cmap, norm = sfr_colormap(mean_sfr, cmap_name, "log")
     dimensionless = k[None, :] ** 2 * power / (2.0 * np.pi)
+    box_size = float(np.asarray(data["box_size_pc"]).flat[0])
     fig, _, _, _ = create_spectrum_figure(
         k,
         power,
@@ -356,6 +643,7 @@ def plot_time_mean_spectrum(data, ranked, output, *, cmap_name=DEFAULT_CMAP, dpi
         norm=norm,
         power_limits=_positive_limits(power),
         dimensionless_limits=_positive_limits(dimensionless),
+        box_size=box_size,
     )
     fig.savefig(output, dpi=dpi, facecolor="white")
     plt.close(fig)
@@ -378,6 +666,8 @@ def render_spectrum_movie(
     k = np.asarray(data["k_centers"])
     power = np.asarray(data["power_delta"])
     dimensionless = np.asarray(data["dimensionless_power"])
+    box_size = float(np.asarray(data["box_size_pc"]).flat[0])
+    mode = k * box_size / (2.0 * np.pi)
     cmap, norm = sfr_colormap(data["mean_sfr10"], cmap_name, "log")
     power_limits = _positive_limits(power)
     dimensionless_limits = _positive_limits(dimensionless)
@@ -399,14 +689,15 @@ def render_spectrum_movie(
                     norm=norm,
                     power_limits=power_limits,
                     dimensionless_limits=dimensionless_limits,
+                    box_size=box_size,
                 )
             else:
                 for model_index, (first, second) in enumerate(lines):
                     values = current[model_index]
                     valid = np.isfinite(values) & (values > 0.0)
-                    first.set_data(k[valid], values[valid])
+                    first.set_data(mode[valid], values[valid])
                     second.set_data(
-                        k[valid],
+                        mode[valid],
                         k[valid] ** 2 * values[valid] / (2.0 * np.pi),
                     )
                 title_text.set_text(
@@ -446,12 +737,23 @@ def render_suite_density_spectrum(
     suite = Path(suite).expanduser()
     output_dir = Path(output_dir) if output_dir else suite / DEFAULT_OUTPUT_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
-    models = discover_evolution_models(suite, model_glob, proj_id)
+    models = [
+        model
+        for model in discover_evolution_models(suite, model_glob, proj_id)
+        if model.name not in EXCLUDED_MODELS
+    ]
     ranked = rank_models_by_sfr(models, bounds=sfr_bounds, max_rows=10000)
     archive = output_dir / DEFAULT_ARCHIVE_NAME
+    removed = ()
     if archive.exists() and not overwrite:
         print(f"Loading existing {archive}", flush=True)
         data = load_spectrum_archive(archive)
+        data, removed = exclude_corrupted_archive_models(data)
+        if removed:
+            print(
+                "Excluding corrupted archive models: " + ", ".join(removed),
+                flush=True,
+            )
         if list(data["model"]) != [model.name for model, _ in ranked]:
             raise ValueError("cached model ordering does not match current SFR ranking")
     else:
@@ -467,6 +769,19 @@ def render_suite_density_spectrum(
             pad_factor=pad_factor,
             output=archive,
         )
+    parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
+    diagnostic_summary = spectrum_diagnostic_summary(
+        data,
+        ranked,
+        bounds=sfr_bounds,
+        model_parameters=parameters,
+    )
+    data = attach_spectrum_diagnostics(data, diagnostic_summary)
+    _atomic_savez(archive, **data)
+    print(f"Wrote {archive}", flush=True)
+    diagnostic_csv = output_dir / f"{DEFAULT_DIAGNOSTIC_NAME}.csv"
+    _atomic_csv(diagnostic_summary, diagnostic_csv)
+    print(f"Wrote {diagnostic_csv}", flush=True)
     summary = output_dir / "density_power_spectrum_time_mean.png"
     cmap, norm = plot_time_mean_spectrum(
         data, ranked, summary, cmap_name=cmap_name, dpi=dpi
@@ -478,7 +793,27 @@ def render_suite_density_spectrum(
         norm,
         bounds=sfr_bounds,
     )
+    for field, scale, parameter_cmap, colorbar_label in DIAGNOSTIC_COLOR_SPECS:
+        suffix = "" if field == "mean_sfr10" else f"_color_by_{field}"
+        diagnostic_output = output_dir / f"{DEFAULT_DIAGNOSTIC_NAME}{suffix}.png"
+        plot_spectrum_diagnostic_relations(
+            diagnostic_summary,
+            diagnostic_output,
+            color_field=field,
+            cmap_name=parameter_cmap,
+            color_scale=scale,
+            colorbar_label=colorbar_label,
+            dpi=dpi,
+        )
     if movie:
+        movie_manifest = output_dir / "density_power_spectrum_movie_models.txt"
+        expected_manifest = "axis=kL/(2pi); top=lambda=2pi/k\n" + "\n".join(
+            str(name) for name in data["model"]
+        )
+        movie_stale = (
+            not movie_manifest.exists()
+            or movie_manifest.read_text() != expected_manifest
+        )
         render_spectrum_movie(
             data,
             ranked,
@@ -486,8 +821,9 @@ def render_suite_density_spectrum(
             cmap_name=cmap_name,
             dpi=max(72, int(round(dpi * 0.78))),
             fps=fps,
-            overwrite=overwrite,
+            overwrite=overwrite or bool(removed) or movie_stale,
         )
+        _atomic_text(expected_manifest, movie_manifest)
     return data, ranked
 
 

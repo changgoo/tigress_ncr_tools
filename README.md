@@ -108,12 +108,13 @@ With `--movie`, the command uses the same ffmpeg workflow and defaults as
 
 ## Suite density power spectra
 
-`plot-suite-density-spectrum` analyzes the 32-model theta0 sequence using
+`plot-suite-density-spectrum` analyzes the clean 31-model theta0 sequence using
 `delta = Sigma/<Sigma> - 1`. It first remaps each map to periodic shearing
 coordinates, then assigns each Fourier mode its instantaneous physical
 wavenumber with `kx = kx0 + q*Omega*t_remap*ky`. Runtime `problem/qshear` and
 `problem/Omega` batch-script overrides take precedence over the athinput
-template values.
+template values. Corrupted `R8_8pc_NCR_row0000` projections are excluded from
+the archive and every derived product.
 
 The mathematical definition, discrete normalization, shear-coordinate
 derivation, and archive-field inventory are documented in
@@ -121,11 +122,13 @@ derivation, and archive-field inventory are documented in
 
 The default output directory is `SUITE/density_power_spectrum_theta0/`. It
 contains the complete `P_delta(t,k)` archive, a `t=200--600` mean-spectrum
-comparison, the exact model/SFR/color key, and—with `--movie`—the 601-frame
-spectrum evolution and MP4. Both dimensional `P_delta(k)` and variance per
-logarithmic interval, `k^2 P_delta(k)/(2 pi)`, are plotted. Model colors use the
-same logarithmically normalized `plasma` mapping as the history-evolution
-figure.
+comparison, an integral-scale/spectral-slope CSV, four two-panel SFR relation
+figures, the exact model/SFR/color key, and—with `--movie`—the 601-frame
+spectrum evolution and MP4. The slope fits `P_delta proportional to k^-alpha`
+over `10*dx < 2*pi/k < L_in`. Scatter colors use `plasma`, `viridis`, `cividis`,
+and `magma` for SFR, orbital frequency, stellar midplane density, and shear.
+Spectrum figures use `kL/(2*pi)` on the lower axis and the corresponding
+physical wavelength `lambda=2*pi/k` in pc on the upper axis.
 
 ```bash
 plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
