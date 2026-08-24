@@ -82,6 +82,33 @@ coordinates. Horizontal and vertical bars independently span the 16th--84th
 percentiles of the speed and PDF width. Thus, the bars show temporal scatter
 within each model rather than uncertainty on the median.
 
+A separate derived-velocity figure uses
+
+\[
+\sigma_{\rm 3D} \equiv
+\sqrt{\sigma_1^2+\sigma_2^2+\sigma_3^2},
+\qquad
+v_{A,{\rm 3D}} \equiv
+\sqrt{v_{A,1}^2+v_{A,2}^2+v_{A,3}^2}.
+\]
+
+The thermal history diagnostic \(\sqrt{P/M}\) is identified with \(c_s\). The
+ordinary and magnetic-pressure-corrected Mach diagnostics are
+
+\[
+\mathcal{M} \equiv \frac{\sigma_{\rm 3D}}{c_s},
+\qquad
+\beta \equiv \frac{2c_s^2}{v_{A,{\rm 3D}}^2},
+\qquad
+\mathcal{M}_{\rm corr} \equiv
+\frac{\mathcal{M}}{\sqrt{1+1/\beta}}.
+\]
+
+All five intermediate quantities, including \(\beta\), are calculated at each
+history timestamp. The plotted medians and percentile ranges are then measured
+from those instantaneous series; they are not constructed from independently
+averaged velocity components.
+
 ## 3. Median PDF and Gaussian fit
 
 At every stored \(s\) bin, the code takes the temporal median of
@@ -125,6 +152,8 @@ archive, `density_pdfs.npz`, includes:
 - the same temporal summaries for all seven mass-weighted characteristic
   speeds, stored with keys such as `sigma_x1_time_median` and
   `alfven_x3_time_percentile84`;
+- temporal summaries of `sigma_3d`, `alfven_3d`, `plasma_beta`, `mach_3d`, and
+  `mach_mhd`, along with scalar text fields recording their definitions;
 - pointwise temporal PDF quantiles and the fitted Gaussian curves;
 - \(\Omega\), \(\kappa\), \(\rho_*\), and \(q\) for each model.
 
@@ -135,6 +164,9 @@ The directory also contains:
 - `density_pdf_widths_correlations.png`: the 2-by-3 width correlation figure;
 - `density_pdf_widths_velocity_correlations.png`: the 2-by-7 comparison with
   three kinetic dispersions, thermal speed, and three Alfvén speeds;
+- `density_pdf_widths_derived_velocity_correlations.png`: the 2-by-4 comparison
+  with \(\sigma_{\rm 3D}\), \(v_{A,{\rm 3D}}\), \(\mathcal{M}\), and
+  \(\mathcal{M}_{\rm corr}\);
 - `density_pdf_time_median.png`: all-model median \(\delta\) and \(s\) PDFs,
   with dashed Gaussian curves in the \(s\) panel. Its displayed limits retain
   the union of median-PDF bins with density at least \(10^{-4}\), removing

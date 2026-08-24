@@ -9,10 +9,12 @@ matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_density_pdf import (
     attach_velocity_summary,
+    derived_velocity_quantities,
     frame_density_pdf,
     gaussian_fit_from_pdf,
     pdf_display_limits,
     plot_median_pdfs,
+    plot_pdf_width_derived_velocity_correlations,
     plot_pdf_width_correlations,
     plot_pdf_width_velocity_correlations,
     plot_s_pdf_fit_grid,
@@ -56,6 +58,26 @@ def test_pdf_display_limits_exclude_empty_histogram_tails():
     x_limits, y_limits = pdf_display_limits(centers, density)
     assert x_limits == pytest.approx((-2.0, 1.0))
     assert y_limits == pytest.approx((5.0e-5, 1.5))
+
+
+def test_derived_velocity_quantities_are_formed_instantaneously():
+    speeds = {
+        "sigma_x1": np.asarray([3.0, 0.0]),
+        "sigma_x2": np.asarray([4.0, 0.0]),
+        "sigma_x3": np.asarray([12.0, 2.0]),
+        "thermal": np.asarray([5.0, 1.0]),
+        "alfven_x1": np.asarray([1.0, 0.0]),
+        "alfven_x2": np.asarray([2.0, 0.0]),
+        "alfven_x3": np.asarray([2.0, 0.0]),
+    }
+    derived = derived_velocity_quantities(speeds)
+    np.testing.assert_allclose(derived["sigma_3d"], [13.0, 2.0])
+    np.testing.assert_allclose(derived["alfven_3d"], [3.0, 0.0])
+    np.testing.assert_allclose(derived["plasma_beta"][0], 50.0 / 9.0)
+    np.testing.assert_allclose(derived["mach_3d"], [2.6, 2.0])
+    assert np.isinf(derived["plasma_beta"][1])
+    assert derived["mach_mhd"][1] == pytest.approx(2.0)
+    assert derived["mach_mhd"][0] == pytest.approx(2.6 / np.sqrt(1.18))
 
 
 def _plot_data():
@@ -145,6 +167,16 @@ def test_velocity_summary_and_correlation_figure(monkeypatch, tmp_path):
     augmented = attach_velocity_summary(summary, ranked, bounds=(200.0, 600.0))
     assert augmented["sigma_x1_time_median"].iloc[0] == pytest.approx(np.sqrt(2.0))
     assert augmented["thermal_time_count"].iloc[0] == 3
+    assert augmented["sigma_3d_time_median"].iloc[0] == pytest.approx(np.sqrt(12.0))
+    assert augmented["alfven_3d_time_median"].iloc[0] == pytest.approx(6.0)
+    assert augmented["plasma_beta_time_median"].iloc[0] == pytest.approx(2.0 / 9.0)
+    assert augmented["mach_3d_time_median"].iloc[0] == pytest.approx(np.sqrt(3.0))
+    assert augmented["mach_mhd_time_median"].iloc[0] == pytest.approx(
+        np.sqrt(6.0 / 11.0)
+    )
     output = tmp_path / "velocity_correlations.png"
     plot_pdf_width_velocity_correlations(augmented, output, dpi=40)
     assert output.stat().st_size > 0
+    derived_output = tmp_path / "derived_velocity_correlations.png"
+    plot_pdf_width_derived_velocity_correlations(augmented, derived_output, dpi=40)
+    assert derived_output.stat().st_size > 0

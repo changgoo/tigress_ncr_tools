@@ -163,6 +163,9 @@ correlates both widths with epicyclic frequency, stellar midplane density, and
 mean SFR. A companion 2-by-7 figure compares the same widths with the three
 mass-weighted kinetic dispersions, thermal speed, and three Alfvén speeds from
 the whole-domain histories, using 200--600 Myr medians and percentile bars.
+A separate 2-by-4 panel compares both PDF widths with the 3D turbulent and
+Alfvén speeds, the turbulent Mach number, and its magnetic-pressure-corrected
+form.
 
 The output directory `SUITE/density_pdf_theta0/` also contains all-model median
 PDFs and a 4-by-8 grid comparing each median `s`-PDF with its moment-matched

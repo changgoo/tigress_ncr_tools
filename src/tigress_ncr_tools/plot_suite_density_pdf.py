@@ -50,6 +50,16 @@ DEFAULT_PDF_BINS = 100
 DEFAULT_CMAP = "plasma"
 DEFAULT_HISTORY_SAMPLES = 4000
 DEFAULT_PDF_DISPLAY_FLOOR = 1.0e-4
+DERIVED_VELOCITY_QUANTITIES = (
+    ("sigma_3d", r"$\sigma_{\rm 3D}$", r"speed $[{\rm km\,s^{-1}}]$"),
+    ("alfven_3d", r"$v_{A,{\rm 3D}}$", r"speed $[{\rm km\,s^{-1}}]$"),
+    ("mach_3d", r"$\mathcal{M}=\sigma_{\rm 3D}/c_s$", "dimensionless"),
+    (
+        "mach_mhd",
+        r"$\mathcal{M}/\sqrt{1+1/\beta}$",
+        "dimensionless",
+    ),
+)
 
 
 def frame_density_pdf(frame, delta_edges, s_edges):
@@ -296,7 +306,63 @@ def attach_pdf_summary(data, summary, products):
     augmented["gaussian_fit_definition"] = np.asarray(
         "normalized Gaussian moment-matched to the temporal median area-weighted s PDF"
     )
+    augmented["sigma_3d_definition"] = np.asarray(
+        "sqrt(sigma_x1^2+sigma_x2^2+sigma_x3^2)"
+    )
+    augmented["alfven_3d_definition"] = np.asarray(
+        "sqrt(alfven_x1^2+alfven_x2^2+alfven_x3^2)"
+    )
+    augmented["mach_3d_definition"] = np.asarray("sigma_3d/thermal")
+    augmented["plasma_beta_definition"] = np.asarray(
+        "2*thermal^2/alfven_3d^2"
+    )
+    augmented["mach_mhd_definition"] = np.asarray(
+        "mach_3d/sqrt(1+1/plasma_beta)"
+    )
     return augmented
+
+
+def derived_velocity_quantities(speeds):
+    """Return instantaneous 3D speeds, beta, and Mach-number diagnostics."""
+    sigma_3d = np.sqrt(
+        speeds["sigma_x1"] ** 2
+        + speeds["sigma_x2"] ** 2
+        + speeds["sigma_x3"] ** 2
+    )
+    alfven_3d = np.sqrt(
+        speeds["alfven_x1"] ** 2
+        + speeds["alfven_x2"] ** 2
+        + speeds["alfven_x3"] ** 2
+    )
+    sound_speed = np.asarray(speeds["thermal"], dtype=float)
+    mach_3d = np.full(sigma_3d.shape, np.nan)
+    valid_sound = np.isfinite(sigma_3d) & np.isfinite(sound_speed) & (sound_speed > 0.0)
+    mach_3d[valid_sound] = sigma_3d[valid_sound] / sound_speed[valid_sound]
+
+    plasma_beta = np.full(alfven_3d.shape, np.nan)
+    finite_thermal = np.isfinite(sound_speed) & (sound_speed >= 0.0)
+    nonzero_alfven = np.isfinite(alfven_3d) & (alfven_3d > 0.0)
+    valid_beta = finite_thermal & nonzero_alfven
+    plasma_beta[valid_beta] = (
+        2.0 * sound_speed[valid_beta] ** 2 / alfven_3d[valid_beta] ** 2
+    )
+    zero_alfven = finite_thermal & np.isfinite(alfven_3d) & (alfven_3d == 0.0)
+    plasma_beta[zero_alfven] = np.inf
+
+    mach_mhd = np.full(mach_3d.shape, np.nan)
+    valid_mhd = np.isfinite(mach_3d) & (plasma_beta > 0.0)
+    mach_mhd[valid_mhd] = mach_3d[valid_mhd] / np.sqrt(
+        1.0 + 1.0 / plasma_beta[valid_mhd]
+    )
+    infinite_beta = np.isfinite(mach_3d) & np.isinf(plasma_beta)
+    mach_mhd[infinite_beta] = mach_3d[infinite_beta]
+    return {
+        "sigma_3d": sigma_3d,
+        "alfven_3d": alfven_3d,
+        "plasma_beta": plasma_beta,
+        "mach_3d": mach_3d,
+        "mach_mhd": mach_mhd,
+    }
 
 
 def attach_velocity_summary(
@@ -311,7 +377,14 @@ def attach_velocity_summary(
     expected = [model.name for model, _ in ranked]
     if result["model"].tolist() != expected:
         raise ValueError("PDF summary and ranked model ordering differ")
-    statistics = {key: [] for key, _, _, _ in SPEED_QUANTITIES}
+    stored_keys = [key for key, _, _, _ in SPEED_QUANTITIES] + [
+        "sigma_3d",
+        "alfven_3d",
+        "plasma_beta",
+        "mach_3d",
+        "mach_mhd",
+    ]
+    statistics = {key: [] for key in stored_keys}
     for model, _ in ranked:
         history = read_hst(whole_history_file(model), max_rows=history_samples)
         time = np.asarray(history["time"], dtype=float)
@@ -319,10 +392,11 @@ def attach_velocity_summary(
         if not np.any(use):
             raise ValueError(f"{model.name} has no history inside requested time bounds")
         speeds = history_speeds(history)
-        for key, _, _, _ in SPEED_QUANTITIES:
+        speeds.update(derived_velocity_quantities(speeds))
+        for key in stored_keys:
             statistics[key].append(_finite_statistics(speeds[key][use]))
     suffixes = ("mean", "std", "median", "percentile16", "percentile84", "count")
-    for key, _, _, _ in SPEED_QUANTITIES:
+    for key in stored_keys:
         values = np.asarray(statistics[key], dtype=float)
         for index, suffix in enumerate(suffixes):
             result[f"{key}_time_{suffix}"] = values[:, index]
@@ -515,6 +589,91 @@ def plot_pdf_width_velocity_correlations(summary, output, *, dpi=180):
     print(f"Wrote {output}", flush=True)
 
 
+def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
+    """Plot both PDF widths against 3D speeds and Mach diagnostics."""
+    color_values = summary["mean_sfr10"].to_numpy(dtype=float)
+    cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
+    y_specs = (
+        (
+            "std_delta_time_median",
+            "std_delta_time_percentile16",
+            "std_delta_time_percentile84",
+            r"$\sigma_\delta$",
+        ),
+        (
+            "std_s_time_median",
+            "std_s_time_percentile16",
+            "std_s_time_percentile84",
+            r"$\sigma_s$",
+        ),
+    )
+    fig, axes = plt.subplots(2, 4, figsize=(14.4, 7.6), sharex="col")
+    for column, (quantity, title, xlabel) in enumerate(
+        DERIVED_VELOCITY_QUANTITIES
+    ):
+        x = summary[f"{quantity}_time_median"].to_numpy(dtype=float)
+        x_low = summary[f"{quantity}_time_percentile16"].to_numpy(dtype=float)
+        x_high = summary[f"{quantity}_time_percentile84"].to_numpy(dtype=float)
+        for row, (field, low_field, high_field, ylabel) in enumerate(y_specs):
+            axis = axes[row, column]
+            median = summary[field].to_numpy(dtype=float)
+            low = summary[low_field].to_numpy(dtype=float)
+            high = summary[high_field].to_numpy(dtype=float)
+            valid = np.all(
+                np.isfinite([x, x_low, x_high, median, low, high]), axis=0
+            )
+            axis.errorbar(
+                x[valid],
+                median[valid],
+                xerr=np.vstack((x[valid] - x_low[valid], x_high[valid] - x[valid])),
+                yerr=np.vstack(
+                    (median[valid] - low[valid], high[valid] - median[valid])
+                ),
+                fmt="none",
+                ecolor="0.68",
+                elinewidth=0.65,
+                capsize=0,
+                zorder=1,
+            )
+            axis.scatter(
+                x[valid],
+                median[valid],
+                c=color_values[valid],
+                cmap=cmap,
+                norm=norm,
+                s=30,
+                edgecolor="black",
+                linewidth=0.3,
+                zorder=2,
+            )
+            axis.grid(alpha=0.18)
+            axis.tick_params(direction="in", top=True, right=True)
+            if row == 0:
+                axis.set_title(title, fontsize=11)
+            if row == 1:
+                axis.set_xlabel(xlabel)
+            if column == 0:
+                axis.set_ylabel(ylabel)
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = fig.add_axes((0.35, 0.075, 0.30, 0.020))
+    colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    colorbar.set_label(
+        r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+        r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+    )
+    fig.suptitle(
+        "Gas-column PDF width versus 3D velocity and Mach diagnostics: "
+        "200--600 Myr medians and 16th--84th percentiles",
+        fontsize=13,
+    )
+    fig.subplots_adjust(
+        left=0.068, right=0.99, bottom=0.21, top=0.89, hspace=0.22, wspace=0.23
+    )
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {output}", flush=True)
+
+
 def plot_median_pdfs(data, ranked, output, *, dpi=180):
     """Plot all-model temporal median delta and s PDFs with Gaussian s fits."""
     cmap, norm = sfr_colormap(data["mean_sfr10"], DEFAULT_CMAP, "log")
@@ -694,6 +853,11 @@ def render_suite_density_pdf(
     plot_pdf_width_velocity_correlations(
         summary,
         output_dir / f"{DEFAULT_SUMMARY_NAME}_velocity_correlations.png",
+        dpi=dpi,
+    )
+    plot_pdf_width_derived_velocity_correlations(
+        summary,
+        output_dir / f"{DEFAULT_SUMMARY_NAME}_derived_velocity_correlations.png",
         dpi=dpi,
     )
     plot_median_pdfs(data, ranked, output_dir / "density_pdf_time_median.png", dpi=dpi)
