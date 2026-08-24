@@ -266,19 +266,19 @@ The limits are strict and use the instantaneous \(L_{\rm in}(t)\). At least
 three finite positive bins are required; otherwise the instantaneous slope is
 stored as `NaN`.
 
-For the SFR-relation figures, the plotted point and vertical error bar are
+For the relation figures, the point is the median of the finite instantaneous
+measurements from 200 through 600 Myr. The asymmetric vertical bar extends
+from the 16th percentile to the 84th percentile. Here the measured quantity
+\(X\) is either \(L_{\rm in}\) or \(\alpha\). The arithmetic mean and population
+standard deviation are also retained in the archive and CSV, but they are not
+used as the primary plotted summary. The accepted-sample count is recorded for
+each statistic.
+
+The epicyclic frequency used by the correlation figure is
 
 \[
-\left\langle X(t)\right\rangle_{200-600},
-\qquad
-\sigma_X=\sqrt{\left\langle
-[X(t)-\langle X(t)\rangle_{200-600}]^2
-\right\rangle_{200-600}},
+\kappa \equiv \sqrt{2(2-q)}\,\Omega.
 \]
-
-where \(X\) is either \(L_{\rm in}\) or \(\alpha\). Only finite instantaneous
-measurements enter the arithmetic mean and population standard deviation. The
-CSV and archive record the number of accepted measurements for each statistic.
 
 For comparison with the original analysis, the code also computes
 \(L_{\rm in}\) and \(\alpha\) once from the 200--600 Myr mean spectrum. These
@@ -316,15 +316,22 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `pixel_size_pc` | `(Nm,)` | Effective map pixel size \(\max(\Delta x,\Delta y)\) in pc. |
 | `box_size_pc` | `(Nm,)` or scalar | Transverse size \(L=\min(L_x,L_y)\) used for \(kL/(2\pi)\), in pc. Migrated archives store the common suite value as a scalar. |
 | `omega` | `(Nm,)` | Orbital frequency used for diagnostic colors. |
+| `kappa` | `(Nm,)` | Epicyclic frequency \(\sqrt{2(2-q)}\,\Omega\) in \({\rm Myr}^{-1}\). |
 | `stellar_midplane_density` | `(Nm,)` | \(\Sigma_*/(2H_*)\) in \(M_\odot\,{\rm pc}^{-3}\). |
 | `integral_scale_time_pc` | `(Nm,Nt)` | Instantaneous \(L_{\rm in}(t)\) in pc. |
 | `spectral_slope_alpha_time` | `(Nm,Nt)` | Instantaneous positive fitted slope \(\alpha(t)\). |
 | `slope_fit_bin_count_time` | `(Nm,Nt)` | Number of bins in each instantaneous slope fit. |
 | `integral_scale_time_mean_pc` | `(Nm,)` | Temporal mean of finite instantaneous \(L_{\rm in}\) measurements over 200--600 Myr. |
 | `integral_scale_time_std_pc` | `(Nm,)` | Temporal population standard deviation of instantaneous \(L_{\rm in}\). |
+| `integral_scale_time_median_pc` | `(Nm,)` | Temporal median of instantaneous \(L_{\rm in}\) over 200--600 Myr. |
+| `integral_scale_time_percentile16_pc` | `(Nm,)` | Temporal 16th percentile of instantaneous \(L_{\rm in}\). |
+| `integral_scale_time_percentile84_pc` | `(Nm,)` | Temporal 84th percentile of instantaneous \(L_{\rm in}\). |
 | `integral_scale_time_count` | `(Nm,)` | Number of finite instantaneous \(L_{\rm in}\) measurements entering the statistics. |
 | `spectral_slope_alpha_time_mean` | `(Nm,)` | Temporal mean of finite instantaneous \(\alpha\) measurements over 200--600 Myr. |
 | `spectral_slope_alpha_time_std` | `(Nm,)` | Temporal population standard deviation of instantaneous \(\alpha\). |
+| `spectral_slope_alpha_time_median` | `(Nm,)` | Temporal median of instantaneous \(\alpha\) over 200--600 Myr. |
+| `spectral_slope_alpha_time_percentile16` | `(Nm,)` | Temporal 16th percentile of instantaneous \(\alpha\). |
+| `spectral_slope_alpha_time_percentile84` | `(Nm,)` | Temporal 84th percentile of instantaneous \(\alpha\). |
 | `spectral_slope_alpha_time_count` | `(Nm,)` | Number of finite instantaneous \(\alpha\) measurements entering the statistics. |
 | `integral_scale_pc` | `(Nm,)` | Reference \(L_{\rm in}\) measured from the 200--600 Myr mean spectrum, in pc. |
 | `spectral_slope_alpha` | `(Nm,)` | Reference \(\alpha\) measured from the 200--600 Myr mean spectrum. |
@@ -334,7 +341,7 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `diagnostic_time_bounds` | `(2,)` | Time bounds used for the temporal statistics and reference mean spectrum. |
 | `integral_scale_definition` | scalar | Stored text definition of the integral scale. |
 | `spectral_slope_definition` | scalar | Stored text definition of the slope and fit interval. |
-| `time_diagnostic_statistic_definition` | scalar | Stored definition of the instantaneous temporal mean and scatter. |
+| `time_diagnostic_statistic_definition` | scalar | Stored definition of the temporal mean, standard deviation, median, and percentiles. |
 | `parameter_source` | `(Nm,)` | Batch script or `athinput*` file supplying \(q\) and \(\Omega\). |
 | `window` | scalar | Window choice: `none`, `hann`, or `tukey`. |
 | `tukey_alpha` | scalar | Tukey-window taper fraction, retained even for other window choices. |
@@ -357,17 +364,23 @@ The default output directory is
   \(t=200\)--600 mean dimensional and dimensionless spectra. The lower axis
   is \(kL/(2\pi)\), and the upper axis is \(\lambda=2\pi/k\) in pc.
 - `density_power_spectrum_integral_scale_slope.csv`: one row per clean model
-  containing SFR, \(\Omega\), \(\Sigma_*/(2H_*)\), \(q\), the temporal means
-  and standard deviations of \(L_{\rm in}(t)\) and \(\alpha(t)\), accepted
-  sample counts, reference mean-spectrum measurements, pixel size, fit limits,
-  fit-bin count, and averaging bounds.
+  containing SFR, \(\Omega\), \(\kappa\), \(\Sigma_*/(2H_*)\), \(q\), the
+  temporal median, 16th and 84th percentiles, mean, and standard deviation of
+  \(L_{\rm in}(t)\) and \(\alpha(t)\), accepted sample counts, reference
+  mean-spectrum measurements, pixel size, fit limits, fit-bin count, and
+  averaging bounds.
 - `density_power_spectrum_integral_scale_slope.png`: \(L_{\rm in}\) and
-  \(\alpha\) versus mean SFR. Points show the 200--600 Myr temporal means,
-  vertical bars show one standard deviation, and colors use mean SFR with
+  \(\alpha\) versus mean SFR. Points show the 200--600 Myr temporal medians,
+  vertical bars span the 16th--84th percentiles, and colors use mean SFR with
   `plasma`.
 - The same two-panel scatter figure with `_color_by_omega`,
   `_color_by_stellar_midplane_density`, and `_color_by_qshear` suffixes,
   using `viridis`, `cividis`, and `magma`, respectively.
+- `density_power_spectrum_correlations.png`: one 2-by-3 figure with rows for
+  \(L_{\rm in}\) and \(\alpha\), and columns for \(\kappa\),
+  \(\rho_*=\Sigma_*/(2H_*)\), and mean \(\Sigma_{\rm SFR}\). Points and bars
+  use the same median and percentile convention and are colored by mean SFR
+  with `plasma`.
 - `density_power_spectrum.NNNN.png`: one all-model spectrum frame per target
   time when movie rendering is requested.
 - `density_power_spectrum_evolution.mp4`: H.264 animation assembled from those

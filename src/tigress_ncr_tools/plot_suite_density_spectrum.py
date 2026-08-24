@@ -43,6 +43,7 @@ DEFAULT_K_BINS = 40
 DEFAULT_TIME_RANGE = (0, 600)
 EXCLUDED_MODELS = frozenset({"R8_8pc_NCR_row0000"})
 DEFAULT_DIAGNOSTIC_NAME = "density_power_spectrum_integral_scale_slope"
+DEFAULT_CORRELATION_NAME = "density_power_spectrum_correlations"
 DIAGNOSTIC_COLOR_SPECS = (
     (
         "mean_sfr10",
@@ -422,12 +423,21 @@ def spectrum_time_diagnostics(data):
     }
 
 
-def _finite_mean_std(values):
+def _finite_statistics(values):
     values = np.asarray(values, dtype=float)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
-        return np.nan, np.nan, 0
-    return float(np.mean(finite)), float(np.std(finite)), int(finite.size)
+        return (np.nan,) * 5 + (0,)
+    mean, standard_deviation = np.mean(finite), np.std(finite)
+    percentile16, median, percentile84 = np.percentile(finite, [16.0, 50.0, 84.0])
+    return (
+        float(mean),
+        float(standard_deviation),
+        float(median),
+        float(percentile16),
+        float(percentile84),
+        int(finite.size),
+    )
 
 
 def spectrum_diagnostic_summary(
@@ -466,28 +476,52 @@ def spectrum_diagnostic_summary(
             k, mean_power[index], pixel_size[index], mean_spectrum_scale
         )
         use = (time[index] >= bounds[0]) & (time[index] <= bounds[1])
-        scale_mean, scale_std, scale_count = _finite_mean_std(
+        (
+            scale_mean,
+            scale_std,
+            scale_median,
+            scale_percentile16,
+            scale_percentile84,
+            scale_count,
+        ) = _finite_statistics(
             time_diagnostics["integral_scale_time_pc"][index, use]
         )
-        alpha_mean, alpha_std, alpha_count = _finite_mean_std(
+        (
+            alpha_mean,
+            alpha_std,
+            alpha_median,
+            alpha_percentile16,
+            alpha_percentile84,
+            alpha_count,
+        ) = _finite_statistics(
             time_diagnostics["spectral_slope_alpha_time"][index, use]
         )
         parameters = model_parameters[name]
+        omega = float(parameters["omega"])
+        qshear = float(parameters["qshear"])
+        kappa = np.sqrt(2.0 * (2.0 - qshear)) * omega
         rows.append(
             {
                 "model": name,
                 "mean_sfr10": float(data["mean_sfr10"][index]),
-                "omega": float(parameters["omega"]),
+                "omega": omega,
+                "kappa": kappa,
                 "stellar_midplane_density": float(
                     parameters["stellar_midplane_density"]
                 ),
-                "qshear": float(parameters["qshear"]),
+                "qshear": qshear,
                 "pixel_size_pc": float(pixel_size[index]),
                 "integral_scale_time_mean_pc": scale_mean,
                 "integral_scale_time_std_pc": scale_std,
+                "integral_scale_time_median_pc": scale_median,
+                "integral_scale_time_percentile16_pc": scale_percentile16,
+                "integral_scale_time_percentile84_pc": scale_percentile84,
                 "integral_scale_time_count": scale_count,
                 "spectral_slope_alpha_time_mean": alpha_mean,
                 "spectral_slope_alpha_time_std": alpha_std,
+                "spectral_slope_alpha_time_median": alpha_median,
+                "spectral_slope_alpha_time_percentile16": alpha_percentile16,
+                "spectral_slope_alpha_time_percentile84": alpha_percentile84,
                 "spectral_slope_alpha_time_count": alpha_count,
                 "integral_scale_pc": mean_spectrum_scale,
                 "spectral_slope_alpha": mean_spectrum_alpha,
@@ -507,13 +541,20 @@ def attach_spectrum_diagnostics(data, summary, time_diagnostics):
     columns = (
         "pixel_size_pc",
         "omega",
+        "kappa",
         "stellar_midplane_density",
         "qshear",
         "integral_scale_time_mean_pc",
         "integral_scale_time_std_pc",
+        "integral_scale_time_median_pc",
+        "integral_scale_time_percentile16_pc",
+        "integral_scale_time_percentile84_pc",
         "integral_scale_time_count",
         "spectral_slope_alpha_time_mean",
         "spectral_slope_alpha_time_std",
+        "spectral_slope_alpha_time_median",
+        "spectral_slope_alpha_time_percentile16",
+        "spectral_slope_alpha_time_percentile84",
         "spectral_slope_alpha_time_count",
         "integral_scale_pc",
         "spectral_slope_alpha",
@@ -534,8 +575,9 @@ def attach_spectrum_diagnostics(data, summary, time_diagnostics):
         "P_delta(k) proportional to k^-alpha for 10*pixel_size < 2pi/k < L_in"
     )
     augmented["time_diagnostic_statistic_definition"] = np.asarray(
-        "arithmetic mean and population standard deviation of finite "
-        "instantaneous measurements within diagnostic_time_bounds"
+        "mean, population standard deviation, median, and 16th/84th "
+        "percentiles of finite instantaneous measurements within "
+        "diagnostic_time_bounds"
     )
     augmented["excluded_models"] = np.asarray(sorted(EXCLUDED_MODELS))
     if "box_size_pc" not in augmented:
@@ -575,50 +617,41 @@ def plot_spectrum_diagnostic_relations(
     x = summary["mean_sfr10"].to_numpy(dtype=float)
     specifications = (
         (
-            "integral_scale_time_mean_pc",
-            "integral_scale_time_std_pc",
+            "integral_scale_time_median_pc",
+            "integral_scale_time_percentile16_pc",
+            "integral_scale_time_percentile84_pc",
             r"$L_{\rm in}\ [{\rm pc}]$",
         ),
         (
-            "spectral_slope_alpha_time_mean",
-            "spectral_slope_alpha_time_std",
+            "spectral_slope_alpha_time_median",
+            "spectral_slope_alpha_time_percentile16",
+            "spectral_slope_alpha_time_percentile84",
             r"$\alpha\quad(P_\delta\propto k^{-\alpha})$",
         ),
     )
     fig, axes = plt.subplots(1, 2, figsize=(11.8, 5.2), sharex=True)
-    for axis, (field, scatter_field, ylabel) in zip(axes, specifications):
+    for axis, (field, low_field, high_field, ylabel) in zip(axes, specifications):
         y = summary[field].to_numpy(dtype=float)
-        y_scatter = summary[scatter_field].to_numpy(dtype=float)
+        y_low = summary[low_field].to_numpy(dtype=float)
+        y_high = summary[high_field].to_numpy(dtype=float)
         valid = (
             np.isfinite(x)
             & (x > 0.0)
             & np.isfinite(y)
-            & np.isfinite(y_scatter)
-            & (y_scatter >= 0.0)
+            & np.isfinite(y_low)
+            & np.isfinite(y_high)
+            & (y_low <= y)
+            & (y <= y_high)
         )
-        for x_value, y_value, scatter, color_value in zip(
-            x[valid], y[valid], y_scatter[valid], color_values[valid]
-        ):
-            axis.errorbar(
-                x_value,
-                y_value,
-                yerr=scatter,
-                color=cmap(norm(color_value)),
-                alpha=0.58,
-                linewidth=1.0,
-                capsize=2.0,
-                zorder=1,
-            )
-        axis.scatter(
+        _plot_percentile_points(
+            axis,
             x[valid],
             y[valid],
-            c=color_values[valid],
-            cmap=cmap,
-            norm=norm,
-            s=42,
-            edgecolor="black",
-            linewidth=0.4,
-            zorder=2,
+            y_low[valid],
+            y_high[valid],
+            color_values[valid],
+            cmap,
+            norm,
         )
         axis.set_xscale("log")
         axis.set_xlabel(
@@ -636,10 +669,121 @@ def plot_spectrum_diagnostic_relations(
     colorbar.set_label(colorbar_label)
     fig.suptitle(
         "Gas-column density integral scale and spectral slope "
-        r"(200--600 Myr instantaneous mean $\pm 1\sigma$)",
+        "(200--600 Myr instantaneous median and 16th--84th percentiles)",
         fontsize=13,
     )
     fig.subplots_adjust(left=0.09, right=0.98, bottom=0.31, top=0.88, wspace=0.24)
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {output}", flush=True)
+
+
+def _plot_percentile_points(axis, x, median, percentile16, percentile84, color, cmap, norm):
+    """Plot colored medians with asymmetric 16th--84th percentile bars."""
+    for x_value, center, low, high, color_value in zip(
+        x, median, percentile16, percentile84, color
+    ):
+        axis.errorbar(
+            x_value,
+            center,
+            yerr=np.asarray([[center - low], [high - center]]),
+            color=cmap(norm(color_value)),
+            alpha=0.58,
+            linewidth=1.0,
+            capsize=2.0,
+            zorder=1,
+        )
+    axis.scatter(
+        x,
+        median,
+        c=color,
+        cmap=cmap,
+        norm=norm,
+        s=42,
+        edgecolor="black",
+        linewidth=0.4,
+        zorder=2,
+    )
+
+
+def plot_spectrum_correlations(summary, output, *, dpi=180):
+    """Plot spectrum diagnostics against kappa, stellar density, and SFR."""
+    color_values = summary["mean_sfr10"].to_numpy(dtype=float)
+    cmap, norm = sfr_colormap(color_values, "plasma", "log")
+    x_specifications = (
+        ("kappa", r"$\kappa=\sqrt{2(2-q)}\,\Omega\ [{\rm Myr}^{-1}]$"),
+        (
+            "stellar_midplane_density",
+            r"$\rho_*=\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
+        ),
+        (
+            "mean_sfr10",
+            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
+        ),
+    )
+    y_specifications = (
+        (
+            "integral_scale_time_median_pc",
+            "integral_scale_time_percentile16_pc",
+            "integral_scale_time_percentile84_pc",
+            r"$L_{\rm in}\ [{\rm pc}]$",
+        ),
+        (
+            "spectral_slope_alpha_time_median",
+            "spectral_slope_alpha_time_percentile16",
+            "spectral_slope_alpha_time_percentile84",
+            r"$\alpha$",
+        ),
+    )
+    fig, axes = plt.subplots(2, 3, figsize=(14.2, 8.2), sharex="col")
+    for column, (x_field, xlabel) in enumerate(x_specifications):
+        x = summary[x_field].to_numpy(dtype=float)
+        for row, (field, low_field, high_field, ylabel) in enumerate(
+            y_specifications
+        ):
+            axis = axes[row, column]
+            median = summary[field].to_numpy(dtype=float)
+            percentile16 = summary[low_field].to_numpy(dtype=float)
+            percentile84 = summary[high_field].to_numpy(dtype=float)
+            valid = (
+                np.isfinite(x)
+                & (x > 0.0)
+                & np.isfinite(median)
+                & np.isfinite(percentile16)
+                & np.isfinite(percentile84)
+                & (percentile16 <= median)
+                & (median <= percentile84)
+            )
+            _plot_percentile_points(
+                axis,
+                x[valid],
+                median[valid],
+                percentile16[valid],
+                percentile84[valid],
+                color_values[valid],
+                cmap,
+                norm,
+            )
+            axis.set_xscale("log")
+            if row == 1:
+                axis.set_xlabel(xlabel)
+            if column == 0:
+                axis.set_ylabel(ylabel)
+            axis.grid(alpha=0.18, which="both")
+            axis.tick_params(direction="in", top=True, right=True)
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = fig.add_axes((0.35, 0.075, 0.30, 0.018))
+    colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    colorbar.set_label(DIAGNOSTIC_COLOR_SPECS[0][3])
+    fig.suptitle(
+        "Gas-column spectrum correlations: 200--600 Myr median "
+        "and 16th--84th percentiles",
+        fontsize=13,
+    )
+    fig.subplots_adjust(
+        left=0.075, right=0.985, bottom=0.22, top=0.92, hspace=0.32, wspace=0.22
+    )
     fig.savefig(output, dpi=dpi, facecolor="white")
     plt.close(fig)
     print(f"Wrote {output}", flush=True)
@@ -914,6 +1058,11 @@ def render_suite_density_spectrum(
             colorbar_label=colorbar_label,
             dpi=dpi,
         )
+    plot_spectrum_correlations(
+        diagnostic_summary,
+        output_dir / f"{DEFAULT_CORRELATION_NAME}.png",
+        dpi=dpi,
+    )
     if movie:
         movie_manifest = output_dir / "density_power_spectrum_movie_models.txt"
         expected_manifest = "axis=kL/(2pi); top=lambda=2pi/k\n" + "\n".join(

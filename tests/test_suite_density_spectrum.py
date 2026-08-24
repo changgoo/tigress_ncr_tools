@@ -13,6 +13,7 @@ from tigress_ncr_tools.plot_suite_density_spectrum import (
     integral_scale,
     overdensity_power,
     plot_spectrum_diagnostic_relations,
+    plot_spectrum_correlations,
     plot_time_mean_spectrum,
     spectrum_time_diagnostics,
     spectral_slope_alpha,
@@ -128,6 +129,12 @@ def test_spectrum_diagnostic_relation_figure(tmp_path):
             "integral_scale_time_std_pc": [25.0, 35.0],
             "spectral_slope_alpha_time_mean": [2.15, 2.35],
             "spectral_slope_alpha_time_std": [0.12, 0.18],
+            "integral_scale_time_median_pc": [272.0, 382.0],
+            "integral_scale_time_percentile16_pc": [250.0, 350.0],
+            "integral_scale_time_percentile84_pc": [300.0, 420.0],
+            "spectral_slope_alpha_time_median": [2.14, 2.34],
+            "spectral_slope_alpha_time_percentile16": [2.02, 2.17],
+            "spectral_slope_alpha_time_percentile84": [2.27, 2.51],
         }
     )
     output = tmp_path / "diagnostics.png"
@@ -140,6 +147,25 @@ def test_spectrum_diagnostic_relation_figure(tmp_path):
         colorbar_label=r"$\Omega$",
         dpi=50,
     )
+    assert output.stat().st_size > 0
+
+
+def test_spectrum_correlation_figure(tmp_path):
+    summary = pd.DataFrame(
+        {
+            "mean_sfr10": [1.0e-3, 1.0e-2],
+            "kappa": [0.03, 0.06],
+            "stellar_midplane_density": [0.02, 0.08],
+            "integral_scale_time_median_pc": [270.0, 380.0],
+            "integral_scale_time_percentile16_pc": [245.0, 345.0],
+            "integral_scale_time_percentile84_pc": [300.0, 420.0],
+            "spectral_slope_alpha_time_median": [2.1, 2.4],
+            "spectral_slope_alpha_time_percentile16": [1.9, 2.2],
+            "spectral_slope_alpha_time_percentile84": [2.3, 2.6],
+        }
+    )
+    output = tmp_path / "correlations.png"
+    plot_spectrum_correlations(summary, output, dpi=50)
     assert output.stat().st_size > 0
 
 
