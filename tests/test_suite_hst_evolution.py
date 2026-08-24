@@ -7,13 +7,18 @@ import pytest
 matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_hst_evolution import (
+    DERIVED_VELOCITY_QUANTITIES,
     HISTORY_PARAMETER_COLOR_SPECS,
+    SPEED_QUANTITIES,
     characteristic_speed,
     discover_history_models,
     history_speeds,
     model_history_parameters,
+    plot_velocity_parameter_correlations,
     plot_velocity_evolution,
     sfr_colormap,
+    velocity_diagnostic_summary,
+    write_velocity_summary,
     write_model_colors,
 )
 
@@ -132,3 +137,55 @@ def test_history_parameter_colors_are_distinct(monkeypatch):
         "qshear": 0.8,
     }
     assert len({cmap for _, _, cmap, _ in HISTORY_PARAMETER_COLOR_SPECS}) == 3
+
+
+def test_velocity_diagnostic_summary_csv_and_correlations(monkeypatch, tmp_path):
+    history = {
+        "time": np.asarray([100.0, 200.0, 400.0, 600.0, 700.0]),
+        "mass": np.ones(5),
+    }
+    for index, (_, _, field, _) in enumerate(SPEED_QUANTITIES, start=1):
+        history[field] = np.full(5, float(index))
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_hst_evolution.whole_history_file",
+        lambda model: model,
+    )
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_hst_evolution.read_hst",
+        lambda path, max_rows=None: history,
+    )
+    monkeypatch.setattr(
+        "tigress_ncr_tools.plot_suite_hst_evolution.model_history_parameters",
+        lambda model: {
+            "omega": 0.03 if model.name == "high" else 0.02,
+            "stellar_midplane_density": 0.1 if model.name == "high" else 0.05,
+            "qshear": 1.0,
+        },
+    )
+    ranked = [(Path("high"), 1.0e-2), (Path("low"), 1.0e-3)]
+    rows = velocity_diagnostic_summary(ranked, bounds=(200.0, 600.0))
+    assert len(rows) == 2
+    assert rows[0]["sigma_x1_time_median"] == pytest.approx(np.sqrt(2.0))
+    assert rows[0]["sigma_3d_time_median"] == pytest.approx(np.sqrt(12.0))
+    assert rows[0]["kappa"] == pytest.approx(np.sqrt(2.0) * 0.03)
+    csv_path = tmp_path / "summary.csv"
+    write_velocity_summary(rows, csv_path)
+    assert csv_path.read_text().splitlines()[0].startswith("model,mean_sfr10")
+
+    component_output = tmp_path / "components.png"
+    component_specs = tuple(
+        (key, label, "speed") for key, label, _, _ in SPEED_QUANTITIES[:2]
+    )
+    plot_velocity_parameter_correlations(
+        rows, component_specs, component_output, bounds=(200.0, 600.0), dpi=40
+    )
+    derived_output = tmp_path / "derived.png"
+    plot_velocity_parameter_correlations(
+        rows,
+        DERIVED_VELOCITY_QUANTITIES[:2],
+        derived_output,
+        bounds=(200.0, 600.0),
+        dpi=40,
+    )
+    assert component_output.stat().st_size > 0
+    assert derived_output.stat().st_size > 0

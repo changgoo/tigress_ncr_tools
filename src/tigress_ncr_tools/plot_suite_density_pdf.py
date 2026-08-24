@@ -30,7 +30,9 @@ from .plot_suite_evolution import (
     short_model_name,
 )
 from .plot_suite_hst_evolution import (
+    DERIVED_VELOCITY_QUANTITIES,
     SPEED_QUANTITIES,
+    derived_velocity_quantities,
     history_speeds,
     model_history_parameters,
     sfr_colormap,
@@ -50,16 +52,6 @@ DEFAULT_PDF_BINS = 100
 DEFAULT_CMAP = "plasma"
 DEFAULT_HISTORY_SAMPLES = 4000
 DEFAULT_PDF_DISPLAY_FLOOR = 1.0e-4
-DERIVED_VELOCITY_QUANTITIES = (
-    ("sigma_3d", r"$\sigma_{\rm 3D}$", r"speed $[{\rm km\,s^{-1}}]$"),
-    ("alfven_3d", r"$v_{A,{\rm 3D}}$", r"speed $[{\rm km\,s^{-1}}]$"),
-    ("mach_3d", r"$\mathcal{M}=\sigma_{\rm 3D}/c_s$", "dimensionless"),
-    (
-        "mach_mhd",
-        r"$\mathcal{M}/\sqrt{1+1/\beta}$",
-        "dimensionless",
-    ),
-)
 
 
 def frame_density_pdf(frame, delta_edges, s_edges):
@@ -320,49 +312,6 @@ def attach_pdf_summary(data, summary, products):
         "mach_3d/sqrt(1+1/plasma_beta)"
     )
     return augmented
-
-
-def derived_velocity_quantities(speeds):
-    """Return instantaneous 3D speeds, beta, and Mach-number diagnostics."""
-    sigma_3d = np.sqrt(
-        speeds["sigma_x1"] ** 2
-        + speeds["sigma_x2"] ** 2
-        + speeds["sigma_x3"] ** 2
-    )
-    alfven_3d = np.sqrt(
-        speeds["alfven_x1"] ** 2
-        + speeds["alfven_x2"] ** 2
-        + speeds["alfven_x3"] ** 2
-    )
-    sound_speed = np.asarray(speeds["thermal"], dtype=float)
-    mach_3d = np.full(sigma_3d.shape, np.nan)
-    valid_sound = np.isfinite(sigma_3d) & np.isfinite(sound_speed) & (sound_speed > 0.0)
-    mach_3d[valid_sound] = sigma_3d[valid_sound] / sound_speed[valid_sound]
-
-    plasma_beta = np.full(alfven_3d.shape, np.nan)
-    finite_thermal = np.isfinite(sound_speed) & (sound_speed >= 0.0)
-    nonzero_alfven = np.isfinite(alfven_3d) & (alfven_3d > 0.0)
-    valid_beta = finite_thermal & nonzero_alfven
-    plasma_beta[valid_beta] = (
-        2.0 * sound_speed[valid_beta] ** 2 / alfven_3d[valid_beta] ** 2
-    )
-    zero_alfven = finite_thermal & np.isfinite(alfven_3d) & (alfven_3d == 0.0)
-    plasma_beta[zero_alfven] = np.inf
-
-    mach_mhd = np.full(mach_3d.shape, np.nan)
-    valid_mhd = np.isfinite(mach_3d) & (plasma_beta > 0.0)
-    mach_mhd[valid_mhd] = mach_3d[valid_mhd] / np.sqrt(
-        1.0 + 1.0 / plasma_beta[valid_mhd]
-    )
-    infinite_beta = np.isfinite(mach_3d) & np.isinf(plasma_beta)
-    mach_mhd[infinite_beta] = mach_3d[infinite_beta]
-    return {
-        "sigma_3d": sigma_3d,
-        "alfven_3d": alfven_3d,
-        "plasma_beta": plasma_beta,
-        "mach_3d": mach_3d,
-        "mach_mhd": mach_mhd,
-    }
 
 
 def attach_velocity_summary(

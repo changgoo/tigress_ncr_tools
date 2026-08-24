@@ -9,7 +9,6 @@ matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_density_pdf import (
     attach_velocity_summary,
-    derived_velocity_quantities,
     frame_density_pdf,
     gaussian_fit_from_pdf,
     pdf_display_limits,
@@ -19,7 +18,10 @@ from tigress_ncr_tools.plot_suite_density_pdf import (
     plot_pdf_width_velocity_correlations,
     plot_s_pdf_fit_grid,
 )
-from tigress_ncr_tools.plot_suite_hst_evolution import SPEED_QUANTITIES
+from tigress_ncr_tools.plot_suite_hst_evolution import (
+    SPEED_QUANTITIES,
+    derived_velocity_quantities,
+)
 
 
 def test_frame_density_pdf_normalizes_and_measures_pixels_directly():

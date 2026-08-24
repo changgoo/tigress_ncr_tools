@@ -23,6 +23,7 @@ from .surface_density_stats import read_shear_parameters
 DEFAULT_SUITE = Path("/tigress/changgoo/anvil/TIGRESS-NCR-suite")
 DEFAULT_OUTPUT_NAME = "hst_evolution"
 DEFAULT_FIGURE_NAME = "velocity_dispersions"
+DEFAULT_SUMMARY_NAME = "velocity_dispersion_summary"
 DEFAULT_TIME_RANGE = (0.0, 600.0)
 DEFAULT_CMAP = "plasma"
 HISTORY_PARAMETER_COLOR_SPECS = (
@@ -45,6 +46,16 @@ SPEED_QUANTITIES = (
     ("alfven_x1", r"$v_{A,1}=\sqrt{2\,\mathrm{ME}_1/M}$", "x1ME", 2.0),
     ("alfven_x2", r"$v_{A,2}=\sqrt{2\,\mathrm{ME}_2/M}$", "x2ME", 2.0),
     ("alfven_x3", r"$v_{A,3}=\sqrt{2\,\mathrm{ME}_3/M}$", "x3ME", 2.0),
+)
+DERIVED_VELOCITY_QUANTITIES = (
+    ("sigma_3d", r"$\sigma_{\rm 3D}$", r"speed $[{\rm km\,s^{-1}}]$"),
+    ("alfven_3d", r"$v_{A,{\rm 3D}}$", r"speed $[{\rm km\,s^{-1}}]$"),
+    ("mach_3d", r"$\mathcal{M}=\sigma_{\rm 3D}/c_s$", "dimensionless"),
+    (
+        "mach_mhd",
+        r"$\mathcal{M}/\sqrt{1+1/\beta}$",
+        "dimensionless",
+    ),
 )
 
 
@@ -117,6 +128,228 @@ def history_speeds(history):
         key: characteristic_speed(history[field], mass, factor)
         for key, _, field, factor in SPEED_QUANTITIES
     }
+
+
+def derived_velocity_quantities(speeds):
+    """Return instantaneous 3D speeds, beta, and Mach-number diagnostics."""
+    sigma_3d = np.sqrt(
+        speeds["sigma_x1"] ** 2
+        + speeds["sigma_x2"] ** 2
+        + speeds["sigma_x3"] ** 2
+    )
+    alfven_3d = np.sqrt(
+        speeds["alfven_x1"] ** 2
+        + speeds["alfven_x2"] ** 2
+        + speeds["alfven_x3"] ** 2
+    )
+    sound_speed = np.asarray(speeds["thermal"], dtype=float)
+    mach_3d = np.full(sigma_3d.shape, np.nan)
+    valid_sound = np.isfinite(sigma_3d) & np.isfinite(sound_speed) & (sound_speed > 0.0)
+    mach_3d[valid_sound] = sigma_3d[valid_sound] / sound_speed[valid_sound]
+
+    plasma_beta = np.full(alfven_3d.shape, np.nan)
+    finite_thermal = np.isfinite(sound_speed) & (sound_speed >= 0.0)
+    nonzero_alfven = np.isfinite(alfven_3d) & (alfven_3d > 0.0)
+    valid_beta = finite_thermal & nonzero_alfven
+    plasma_beta[valid_beta] = (
+        2.0 * sound_speed[valid_beta] ** 2 / alfven_3d[valid_beta] ** 2
+    )
+    zero_alfven = finite_thermal & np.isfinite(alfven_3d) & (alfven_3d == 0.0)
+    plasma_beta[zero_alfven] = np.inf
+
+    mach_mhd = np.full(mach_3d.shape, np.nan)
+    valid_mhd = np.isfinite(mach_3d) & (plasma_beta > 0.0)
+    mach_mhd[valid_mhd] = mach_3d[valid_mhd] / np.sqrt(
+        1.0 + 1.0 / plasma_beta[valid_mhd]
+    )
+    infinite_beta = np.isfinite(mach_3d) & np.isinf(plasma_beta)
+    mach_mhd[infinite_beta] = mach_3d[infinite_beta]
+    return {
+        "sigma_3d": sigma_3d,
+        "alfven_3d": alfven_3d,
+        "plasma_beta": plasma_beta,
+        "mach_3d": mach_3d,
+        "mach_mhd": mach_mhd,
+    }
+
+
+def _finite_statistics(values):
+    """Return mean, scatter, median, percentiles, and finite sample count."""
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return (np.nan,) * 5 + (0,)
+    percentile16, median, percentile84 = np.percentile(finite, [16.0, 50.0, 84.0])
+    return (
+        float(np.mean(finite)),
+        float(np.std(finite)),
+        float(median),
+        float(percentile16),
+        float(percentile84),
+        int(finite.size),
+    )
+
+
+def velocity_diagnostic_summary(
+    ranked,
+    *,
+    bounds=DEFAULT_SFR_RANGE,
+    history_samples=4000,
+):
+    """Summarize component and derived velocity diagnostics for each model."""
+    if bounds[1] <= bounds[0]:
+        raise ValueError("diagnostic bounds must be increasing")
+    stored_keys = [key for key, _, _, _ in SPEED_QUANTITIES] + [
+        "sigma_3d",
+        "alfven_3d",
+        "plasma_beta",
+        "mach_3d",
+        "mach_mhd",
+    ]
+    suffixes = ("mean", "std", "median", "percentile16", "percentile84", "count")
+    rows = []
+    for model, mean_sfr in ranked:
+        history = read_hst(whole_history_file(model), max_rows=history_samples)
+        time = np.asarray(history["time"], dtype=float)
+        use = np.isfinite(time) & (time >= bounds[0]) & (time <= bounds[1])
+        if not np.any(use):
+            raise ValueError(f"{model.name} has no history inside requested time bounds")
+        speeds = history_speeds(history)
+        speeds.update(derived_velocity_quantities(speeds))
+        parameters = model_history_parameters(model)
+        omega = parameters["omega"]
+        qshear = parameters["qshear"]
+        row = {
+            "model": model.name,
+            "mean_sfr10": float(mean_sfr),
+            "omega": omega,
+            "kappa": np.sqrt(2.0 * (2.0 - qshear)) * omega,
+            "stellar_midplane_density": parameters["stellar_midplane_density"],
+            "qshear": qshear,
+            "average_start": float(bounds[0]),
+            "average_stop": float(bounds[1]),
+        }
+        for key in stored_keys:
+            statistics = _finite_statistics(speeds[key][use])
+            for suffix, value in zip(suffixes, statistics):
+                row[f"{key}_time_{suffix}"] = value
+        rows.append(row)
+    return rows
+
+
+def write_velocity_summary(rows, path):
+    """Write the per-model velocity diagnostic summary as CSV."""
+    if not rows:
+        raise ValueError("velocity summary is empty")
+    path = Path(path)
+    with path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def plot_velocity_parameter_correlations(
+    rows,
+    quantity_specs,
+    output,
+    *,
+    bounds=DEFAULT_SFR_RANGE,
+    title="Velocity correlations",
+    dpi=180,
+):
+    """Plot temporal velocity summaries against kappa, rho-star, and SFR."""
+    if not rows or not quantity_specs:
+        raise ValueError("correlation rows and quantities must be non-empty")
+    color_values = np.asarray([row["mean_sfr10"] for row in rows], dtype=float)
+    cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
+    x_specs = (
+        ("kappa", r"$\kappa=\sqrt{2(2-q)}\,\Omega\ [{\rm Myr}^{-1}]$"),
+        (
+            "stellar_midplane_density",
+            r"$\rho_*=\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
+        ),
+        (
+            "mean_sfr10",
+            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle_{{{bounds[0]:g}-{bounds[1]:g}}}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
+        ),
+    )
+    nrows = len(quantity_specs)
+    fig, axes = plt.subplots(
+        nrows,
+        3,
+        figsize=(14.4, 2.25 * nrows + 2.0),
+        sharex="col",
+        sharey="row",
+        squeeze=False,
+    )
+    for row_index, (quantity, label, unit_label) in enumerate(quantity_specs):
+        median = np.asarray(
+            [row[f"{quantity}_time_median"] for row in rows], dtype=float
+        )
+        low = np.asarray(
+            [row[f"{quantity}_time_percentile16"] for row in rows], dtype=float
+        )
+        high = np.asarray(
+            [row[f"{quantity}_time_percentile84"] for row in rows], dtype=float
+        )
+        for column, (x_field, xlabel) in enumerate(x_specs):
+            axis = axes[row_index, column]
+            x = np.asarray([row[x_field] for row in rows], dtype=float)
+            valid = np.all(np.isfinite([x, median, low, high]), axis=0) & (x > 0.0)
+            axis.errorbar(
+                x[valid],
+                median[valid],
+                yerr=np.vstack(
+                    (median[valid] - low[valid], high[valid] - median[valid])
+                ),
+                fmt="none",
+                ecolor="0.68",
+                elinewidth=0.65,
+                capsize=0,
+                zorder=1,
+            )
+            axis.scatter(
+                x[valid],
+                median[valid],
+                c=color_values[valid],
+                cmap=cmap,
+                norm=norm,
+                s=28,
+                edgecolor="black",
+                linewidth=0.28,
+                zorder=2,
+            )
+            axis.set_xscale("log")
+            axis.grid(alpha=0.18, which="both")
+            axis.tick_params(direction="in", top=True, right=True)
+            if column == 0:
+                axis.set_ylabel(f"{label}\n{unit_label}")
+            if row_index == nrows - 1:
+                axis.set_xlabel(xlabel)
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = fig.add_axes((0.35, 0.045, 0.30, 0.012))
+    colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    colorbar.set_label(
+        rf"$\langle\Sigma_{{\rm SFR,10}}\rangle_{{{bounds[0]:g}-{bounds[1]:g}}}$ "
+        r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+    )
+    fig.suptitle(
+        f"{title}: {bounds[0]:g}--{bounds[1]:g} Myr median and "
+        "16th--84th percentiles",
+        fontsize=14,
+    )
+    fig.subplots_adjust(
+        left=0.105,
+        right=0.99,
+        bottom=0.105,
+        top=0.955,
+        hspace=0.13,
+        wspace=0.12,
+    )
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {output}")
 
 
 def model_history_parameters(model):
@@ -355,6 +588,34 @@ def render_history_evolution(
             dpi=dpi,
         )
         print(f"Wrote {parameter_png}")
+    summary = velocity_diagnostic_summary(
+        ranked,
+        bounds=sfr_bounds,
+        history_samples=history_samples,
+    )
+    summary_path = output_dir / f"{DEFAULT_SUMMARY_NAME}.csv"
+    write_velocity_summary(summary, summary_path)
+    print(f"Wrote {summary_path}")
+    component_specs = tuple(
+        (key, label, r"speed $[{\rm km\,s^{-1}}]$")
+        for key, label, _, _ in SPEED_QUANTITIES
+    )
+    plot_velocity_parameter_correlations(
+        summary,
+        component_specs,
+        output_dir / f"{DEFAULT_FIGURE_NAME}_correlations.png",
+        bounds=sfr_bounds,
+        title="Mass-weighted velocity correlations",
+        dpi=dpi,
+    )
+    plot_velocity_parameter_correlations(
+        summary,
+        DERIVED_VELOCITY_QUANTITIES,
+        output_dir / f"{DEFAULT_FIGURE_NAME}_derived_correlations.png",
+        bounds=sfr_bounds,
+        title="Derived 3D velocity and Mach correlations",
+        dpi=dpi,
+    )
     return png, ranked
 
 

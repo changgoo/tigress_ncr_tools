@@ -61,6 +61,16 @@ use `viridis` for orbital frequency, `cividis` for stellar midplane density,
 and `magma` for shear parameter. Use `--cmap`, `--color-scale`, `--yscale`,
 `--start`, and `--stop` to change the SFR presentation or time interval.
 
+The history-evolution output directory also contains
+`velocity_dispersion_summary.csv`, with 200--600 Myr means, standard
+deviations, medians, 16th--84th percentiles, and sample counts. The 7-by-3
+`velocity_dispersions_correlations.png` plots the three kinetic dispersions,
+thermal speed, and three Alfvén components against epicyclic frequency,
+stellar midplane density, and mean SFR. The 4-by-3
+`velocity_dispersions_derived_correlations.png` presents the corresponding 3D
+kinetic speed, 3D Alfvén speed, turbulent Mach number, and
+magnetic-pressure-corrected Mach number. Both use `plasma` mean-SFR colors.
+
 `plot-suite-evolution` writes the ranked 4x8 total-gas surface-density frames,
 `model_order.csv`, and (with `--movie`) an MP4 beneath
 `SUITE/surface_density_evolution_theta0/`. Use `--map hydrogen-phases` for a
