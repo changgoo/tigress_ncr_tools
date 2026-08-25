@@ -8,6 +8,8 @@ import tigress_ncr_tools.surface_density_stats as stats
 from tigress_ncr_tools.surface_density_stats import (
     angle_averaged_power,
     annular_average_power_2d,
+    annular_power_statistics_2d,
+    band_power_quadrupole_2d,
     centered_subregion,
     pdfs_fluctuations,
     pdfs_log10_sigma,
@@ -108,6 +110,29 @@ def test_stored_2d_power_reduces_to_original_annular_spectrum():
     )
     np.testing.assert_allclose(reduced, direct, equal_nan=True)
     np.testing.assert_array_equal(reduced_count, direct_count)
+
+
+def test_power_quadrupole_recovers_amplitude_and_axial_angle():
+    modes = 8
+    kx0 = 2.0 * np.pi * np.fft.fftfreq(modes)
+    ky = 2.0 * np.pi * np.fft.fftfreq(modes)
+    power_2d = np.zeros((modes, modes))
+    power_2d[1, 0] = 3.0
+    power_2d[-1, 0] = 3.0
+    k_mode = np.sqrt(2.0) * 2.0 * np.pi / modes
+    edges = np.asarray([0.5 * k_mode, 1.5 * k_mode])
+    _, count, q2 = annular_power_statistics_2d(
+        power_2d, kx0, ky, 1.0, edges
+    )
+    assert count[0] >= 2
+    assert abs(q2[0]) == pytest.approx(1.0)
+    assert 0.5 * np.angle(q2[0]) == pytest.approx(np.pi / 4.0)
+    band_q2, band_count = band_power_quadrupole_2d(
+        power_2d, kx0, ky, 1.0, (5.0, 6.0)
+    )
+    assert band_count == 2
+    assert abs(band_q2) == pytest.approx(1.0)
+    assert 0.5 * np.angle(band_q2) == pytest.approx(np.pi / 4.0)
 
 
 def test_area_and_mass_weighted_sigma_delta_and_s_pdfs():

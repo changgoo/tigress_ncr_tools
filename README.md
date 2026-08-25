@@ -146,18 +146,22 @@ derivation, and archive-field inventory are documented in
 The default output directory is `SUITE/density_power_spectrum_theta0/`. It
 contains the complete `P_delta(t,k)` archive, a `t=200--600` mean-spectrum
 comparison, an integral-scale/spectral-slope CSV, four two-panel SFR relation
-figures, a 2-by-3 correlation figure, the exact model/SFR/color key, and—with
+figures, a 4-by-3 correlation figure, the exact model/SFR/color key, and—with
 `--movie`—the 601-frame spectrum evolution and MP4. The slope fits
 `P_delta proportional to k^-alpha`
-over `10*dx < 2*pi/k < L_in`. Scatter colors use `plasma`, `viridis`, `cividis`,
-and `magma` for SFR, orbital frequency, stellar midplane density, and shear.
+over the fixed band `64 pc < 2*pi/k < 256 pc`. Scatter colors use `plasma`,
+`viridis`, `cividis`, and `magma` for SFR, orbital frequency, stellar midplane
+density, and shear.
 Spectrum figures use `kL/(2*pi)` on the lower axis and the corresponding
 physical wavelength `lambda=2*pi/k` in pc on the upper axis.
 
-`L_in` and `alpha` are measured separately for every 1-Myr spectrum. Relation
+`L_in`, `alpha`, and the 64--256 pc quadrupole are measured separately for
+every 1-Myr spectrum. The angle-averaged figure shows mean power and median
+`A2=abs(Q2)` rather than the former dimensionless-power panel. Relation
 figures show the 200--600 Myr temporal median with 16th--84th percentile bars.
-The 2-by-3 figure compares both diagnostics with epicyclic frequency
-`kappa=sqrt(2*(2-q))*Omega`, stellar midplane density, and mean SFR. The
+The 4-by-3 figure compares `L_in`, `alpha`, `A2`, and axial angle `phi2` with
+epicyclic frequency `kappa=sqrt(2*(2-q))*Omega`, stellar midplane density, and
+mean SFR. The
 archive also stores the temporal mean and standard deviation, the full time
 series, and the older diagnostics measured from the mean spectrum.
 

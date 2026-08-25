@@ -248,6 +248,10 @@ wavenumber bin:
 
 ignoring only `NaN` entries from empty annuli. This is a mean of instantaneous
 power spectra, not the power spectrum of a time-averaged density map.
+The companion anisotropy panel uses the temporal median of the instantaneous
+\(A_2(k,t)\) values over the same interval. A median amplitude is preferable
+to the amplitude of a time-averaged complex quadrupole because changes in the
+preferred direction would otherwise cancel.
 
 Models are ordered by decreasing mean `sfr10` over the same interval. Their
 line colors use a logarithmic normalization of that mean SFR through the
@@ -289,30 +293,24 @@ L_{\rm in}\simeq\frac{\displaystyle\sum_a E(k_a)\frac{2\pi}{k_a}\Delta k_a}
      {\displaystyle\sum_a E(k_a)\Delta k_a}.
 \]
 
-Only finite positive spectrum bins enter either sum. The effective pixel size
-is
-
-\[
-\Delta x=\max(\Delta x_{\rm map},\Delta y_{\rm map}),
-\]
-
-which is 8 pc for this suite. The fitted slope is defined to be positive for a
-decreasing dimensional spectrum,
+Only finite positive spectrum bins enter either sum. The fitted slope is
+defined to be positive for a decreasing dimensional spectrum,
 
 \[
 P_\delta(k)=Ck^{-\alpha}.
 \]
 
 An unweighted least-squares fit in \(\ln k\)--\(\ln P_\delta\) space uses only
-bins whose physical wavelength satisfies
+bins whose physical wavelength satisfies the fixed band
 
 \[
-10\Delta x < \lambda=\frac{2\pi}{k} < L_{\rm in}.
+64\ {\mathrm{pc}} < \lambda=\frac{2\pi}{k} < 256\ {\mathrm{pc}}.
 \]
 
-The limits are strict and use the instantaneous \(L_{\rm in}(t)\). At least
-three finite positive bins are required; otherwise the instantaneous slope is
-stored as `NaN`.
+The limits are strict. The same band is used for every model and time, so
+changes in the fitted slope cannot arise from a changing fit interval. At
+least three finite positive bins are required; otherwise the instantaneous
+slope is stored as `NaN`.
 
 For the relation figures, the point is the median of the finite instantaneous
 measurements from 200 through 600 Myr. The asymmetric vertical bar extends
@@ -355,6 +353,14 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `power_delta` | `(Nm,Nt,Nk)` | Annular mean \(P_\delta(k,t)\) in `pc^2`. |
 | `dimensionless_power` | `(Nm,Nt,Nk)` | \(k^2P_\delta/(2\pi)\). |
 | `mode_count` | `(Nm,Nt,Nk)` | Number of discrete modes contributing to each annulus. |
+| `q2_real`, `q2_imaginary` | `(Nm,Nt,Nk)` | Real and imaginary parts of the scale-dependent complex \(Q_2(k,t)\). |
+| `anisotropy_amplitude` | `(Nm,Nt,Nk)` | Raw quadrupole amplitude \(A_2(k,t)=|Q_2(k,t)|\). |
+| `anisotropy_angle_rad` | `(Nm,Nt,Nk)` | Axial Fourier-space angle \(\phi_2(k,t)\) in radians, modulo \(\pi\). |
+| `anisotropy_band_wavelength_pc` | `(2,)` | Fixed band bounds `(64,256)` pc. |
+| `anisotropy_band_q2_real_time`, `anisotropy_band_q2_imaginary_time` | `(Nm,Nt)` | Real and imaginary parts of band-integrated \(Q_{2,B}(t)\). |
+| `anisotropy_band_amplitude_time` | `(Nm,Nt)` | Band-integrated \(A_{2,B}(t)\). |
+| `anisotropy_band_angle_rad_time` | `(Nm,Nt)` | Band-integrated axial angle \(\phi_{2,B}(t)\) in radians. |
+| `anisotropy_band_mode_count_time` | `(Nm,Nt)` | Positive-power modes used by the band quadrupole. |
 | `mean_sigma_code` | `(Nm,Nt)` | Area mean of the remapped `nH` projection in native units. |
 | `remap_time` | `(Nm,Nt)` | Residual \(t_{\rm remap}\) used for the shear remap. |
 | `shear` | `(Nm,Nt)` | Dimensionless residual slope \(s=q\Omega t_{\rm remap}\). |
@@ -381,11 +387,18 @@ and radial bins. After excluding corrupted `row0000`, the current defaults give
 | `spectral_slope_alpha_time_percentile16` | `(Nm,)` | Temporal 16th percentile of instantaneous \(\alpha\). |
 | `spectral_slope_alpha_time_percentile84` | `(Nm,)` | Temporal 84th percentile of instantaneous \(\alpha\). |
 | `spectral_slope_alpha_time_count` | `(Nm,)` | Number of finite instantaneous \(\alpha\) measurements entering the statistics. |
+| `anisotropy_band_amplitude_time_mean`, `anisotropy_band_amplitude_time_std` | `(Nm,)` | Temporal mean and population standard deviation of band \(A_2\). |
+| `anisotropy_band_amplitude_time_median` | `(Nm,)` | Temporal median band \(A_2\). |
+| `anisotropy_band_amplitude_time_percentile16`, `anisotropy_band_amplitude_time_percentile84` | `(Nm,)` | Temporal 16th and 84th percentiles of band \(A_2\). |
+| `anisotropy_band_angle_circular_mean_deg` | `(Nm,)` | Axial circular-mean band angle in degrees. |
+| `anisotropy_band_angle_resultant_length` | `(Nm,)` | Length of the mean double-angle vector; zero indicates dispersed orientations and one a fixed orientation. |
+| `anisotropy_band_angle_time_median_deg` | `(Nm,)` | Circularly unwrapped temporal median angle in degrees. |
+| `anisotropy_band_angle_time_percentile16_deg`, `anisotropy_band_angle_time_percentile84_deg` | `(Nm,)` | Circularly unwrapped 16th and 84th percentile angles around the circular mean. |
 | `integral_scale_pc` | `(Nm,)` | Reference \(L_{\rm in}\) measured from the 200--600 Myr mean spectrum, in pc. |
 | `spectral_slope_alpha` | `(Nm,)` | Reference \(\alpha\) measured from the 200--600 Myr mean spectrum. |
 | `slope_fit_bin_count` | `(Nm,)` | Number of bins in the reference mean-spectrum slope fit. |
-| `slope_fit_lambda_min_pc` | `(Nm,)` | Lower fit wavelength \(10\Delta x\), in pc. |
-| `slope_fit_lambda_max_pc` | `(Nm,)` | Upper fit wavelength \(L_{\rm in}\), in pc. |
+| `slope_fit_lambda_min_pc` | `(Nm,)` | Lower fit wavelength, 64 pc. |
+| `slope_fit_lambda_max_pc` | `(Nm,)` | Upper fit wavelength, 256 pc. |
 | `diagnostic_time_bounds` | `(2,)` | Time bounds used for the temporal statistics and reference mean spectrum. |
 | `integral_scale_definition` | scalar | Stored text definition of the integral scale. |
 | `spectral_slope_definition` | scalar | Stored text definition of the slope and fit interval. |
@@ -411,7 +424,7 @@ The default output directory is
 
 - `density_power_spectra.npz`: complete numerical archive described above.
 - `density_power_spectrum_time_mean.png`: all-model comparison of the
-  \(t=200\)--600 mean dimensional and dimensionless spectra. The lower axis
+  \(t=200\)--600 mean dimensional spectra and median \(A_2(k,t)\). The lower axis
   is \(kL/(2\pi)\), and the upper axis is \(\lambda=2\pi/k\) in pc.
 - `density_power_2d_time_mean.npz`: full-grid physical-coordinate 2D power
   means, mode-deposition counts, coordinate arrays, source archive paths, and
@@ -431,10 +444,11 @@ The default output directory is
 - The same two-panel scatter figure with `_color_by_omega`,
   `_color_by_stellar_midplane_density`, and `_color_by_qshear` suffixes,
   using `viridis`, `cividis`, and `magma`, respectively.
-- `density_power_spectrum_correlations.png`: one 2-by-3 figure with rows for
-  \(L_{\rm in}\) and \(\alpha\), and columns for \(\kappa\),
+- `density_power_spectrum_correlations.png`: one 4-by-3 figure with rows for
+  \(L_{\rm in}\), \(\alpha\), band \(A_2\), and band \(\phi_2\), and columns for \(\kappa\),
   \(\rho_*=\Sigma_*/(2H_*)\), and mean \(\Sigma_{\rm SFR}\). Points and bars
-  use the same median and percentile convention and are colored by mean SFR
+  use medians for \(L_{\rm in}\), \(\alpha\), and \(A_2\), an axial circular
+  mean for \(\phi_2\), and 16th--84th percentile bars. Colors show mean SFR
   with `plasma`.
 - `density_power_spectrum.NNNN.png`: one all-model spectrum frame per target
   time when movie rendering is requested.
@@ -468,7 +482,7 @@ The default output directory is
   two-dimensional spectrum or separate \((k_x,k_y)\) diagnostics would be
   required to study preferred directions directly.
 
-## 11. Recommended anisotropy diagnostics
+## 11. Quadrupole anisotropy diagnostics
 
 The cached 2D spectra make anisotropy measurements possible without rereading
 maps. The preferred primary statistic is the scale-dependent complex
@@ -491,6 +505,24 @@ physical-wavevector direction is
 The factor of two is appropriate because the power of a real field is
 unchanged under \(\boldsymbol{k}\) to \(-\boldsymbol{k}\). This statistic is
 compact, rotationally well defined, and naturally scale dependent.
+The figure shows \(A_2\), rather than complex \(Q_2\), because one real curve
+directly communicates anisotropy strength. Both real components of \(Q_2\)
+are retained in the archive, so its orientation and any alternative complex
+averaging remain recoverable.
+
+The one-number band statistic at each time is calculated directly from all
+physical Fourier modes with \(64\ {\mathrm{pc}}<\lambda_j<256\ {\mathrm{pc}}\):
+
+\[
+Q_{2,B}(t) \equiv
+\frac{\displaystyle\sum_{j\in B}P_j(t)\exp[2i\phi_j(t)]}
+     {\displaystyle\sum_{j\in B}P_j(t)}.
+\]
+
+Its amplitude and axial angle are \(A_{2,B}=|Q_{2,B}|\) and
+\(\phi_{2,B}=\arg(Q_{2,B})/2\). This direct two-dimensional sum weights the
+band with the Fourier-plane area measure represented by the uniform mode
+lattice. It is not an unweighted average of the radial \(Q_2(k)\) bins.
 
 The quadrupole should be evaluated for every instantaneous spectrum and only
 then summarized in time. Taking \(|Q_2|\) from the time-mean 2D map measures
@@ -536,17 +568,12 @@ around the radial and azimuthal Fourier axes. A ratio such as
 depends on the chosen wedge angle; it is best treated as a cross-check rather
 than the primary statistic.
 
-Recommended implementation order:
-
-1. calculate debiased \(A_2(k,t)\) and \(\phi_2(k,t)\) in the same radial bins
-   as the 1D spectrum;
-2. calculate one band-integrated quadrupole over the slope-fit wavelength
-   interval \(10\Delta x<\lambda<L_{\rm in}(t)\); the angular tensor provides
-   an equivalent scalar amplitude and principal direction;
-3. summarize each statistic over 200--600 Myr with its median and
-   16th--84th percentiles;
-4. add radial-versus-azimuthal wedge ratios only as a diagnostic of the
-   quadrupole interpretation.
+The implemented archive contains raw \(Q_2(k,t)\), \(A_2(k,t)\), and
+\(\phi_2(k,t)\), together with the direct 64--256 pc band values for every
+snapshot. Band amplitudes are summarized over 200--600 Myr with their median
+and 16th--84th percentiles. Band angles use the axial circular mean and
+percentiles of angles unwrapped about that mean. The double-angle resultant
+length is stored as a measure of temporal orientation coherence.
 
 All of these calculations must use \(k_x=k_{x,0}+s(t)k_y\), not the stored
 unsheared \(k_{x,0}\). The Fourier-space preferred direction is normal to an

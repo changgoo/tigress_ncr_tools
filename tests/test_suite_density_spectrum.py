@@ -8,6 +8,7 @@ import pytest
 matplotlib.use("Agg")
 
 from tigress_ncr_tools.plot_suite_density_spectrum import (
+    _axial_angle_statistics,
     create_spectrum_figure,
     exclude_corrupted_archive_models,
     integral_scale,
@@ -111,11 +112,23 @@ def test_integral_scale_uses_shell_energy_and_bin_widths():
 
 
 def test_spectral_slope_uses_requested_wavelength_interval():
-    k = np.geomspace(2.0 * np.pi / 600.0, 2.0 * np.pi / 40.0, 40)
+    k = np.geomspace(2.0 * np.pi / 400.0, 2.0 * np.pi / 32.0, 40)
     power = 7.0 * k**-2.5
-    alpha, count = spectral_slope_alpha(k, power, pixel_size=8.0, scale=400.0)
+    wavelength = 2.0 * np.pi / k
+    outside = (wavelength <= 64.0) | (wavelength >= 256.0)
+    power[outside] = 1.0e6 * k[outside] ** 4.0
+    alpha, count = spectral_slope_alpha(k, power)
     assert count > 10
     assert alpha == pytest.approx(2.5)
+
+
+def test_axial_angle_summary_respects_180_degree_wrap():
+    angles = np.deg2rad([88.0, 89.0, -89.0, -88.0])
+    center, coherence, _, low, high, count = _axial_angle_statistics(angles)
+    assert abs(abs(np.rad2deg(center)) - 90.0) < 1.0e-10
+    assert coherence > 0.99
+    assert low <= center <= high
+    assert count == 4
 
 
 def test_diagnostics_are_measured_for_every_instantaneous_spectrum():
@@ -193,6 +206,12 @@ def test_spectrum_correlation_figure(tmp_path):
             "spectral_slope_alpha_time_median": [2.1, 2.4],
             "spectral_slope_alpha_time_percentile16": [1.9, 2.2],
             "spectral_slope_alpha_time_percentile84": [2.3, 2.6],
+            "anisotropy_band_amplitude_time_median": [0.2, 0.4],
+            "anisotropy_band_amplitude_time_percentile16": [0.1, 0.3],
+            "anisotropy_band_amplitude_time_percentile84": [0.3, 0.5],
+            "anisotropy_band_angle_circular_mean_deg": [-20.0, 30.0],
+            "anisotropy_band_angle_time_percentile16_deg": [-35.0, 15.0],
+            "anisotropy_band_angle_time_percentile84_deg": [-5.0, 45.0],
         }
     )
     output = tmp_path / "correlations.png"
@@ -212,6 +231,12 @@ def test_time_mean_spectrum_figure(tmp_path):
             [
                 [[10.0, 3.0, 1.0], [12.0, 4.0, 1.2]],
                 [[5.0, 2.0, 0.8], [6.0, 2.5, 0.9]],
+            ]
+        ),
+        "anisotropy_amplitude": np.array(
+            [
+                [[0.2, 0.3, 0.4], [0.3, 0.4, 0.5]],
+                [[0.1, 0.2, 0.3], [0.2, 0.3, 0.4]],
             ]
         ),
     }
@@ -247,12 +272,13 @@ def test_uniform_first_spectrum_can_initialize_log_figure(tmp_path):
     fig, axes, _, _ = create_spectrum_figure(
         np.array([0.01, 0.02, 0.04]),
         np.zeros((1, 3)),
+        np.zeros((1, 3)),
         ranked,
         title="uniform",
         cmap=cmap,
         norm=norm,
         power_limits=(1.0e-2, 1.0e2),
-        dimensionless_limits=(1.0e-5, 1.0),
+        anisotropy_limits=(0.0, 1.0),
         box_size=1024.0,
     )
     for axis in axes:

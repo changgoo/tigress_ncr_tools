@@ -30,6 +30,8 @@ from .plot_suite_hst_evolution import (
 )
 from .surface_density_stats import (
     annular_average_power_2d,
+    annular_power_statistics_2d,
+    band_power_quadrupole_2d,
     default_k_edges,
     power_spectral_density_2d,
     read_shear_parameters,
@@ -50,6 +52,7 @@ DEFAULT_CORRELATION_NAME = "density_power_spectrum_correlations"
 DEFAULT_POWER2D_MEAN_ARCHIVE = "density_power_2d_time_mean.npz"
 DEFAULT_POWER2D_MEAN_FIGURE = "density_power_2d_time_mean.png"
 DEFAULT_POWER2D_MODE_LIMIT = 16.0
+DEFAULT_SPECTRAL_BAND_PC = (64.0, 256.0)
 POWER2D_DIRECTORY = "density_power_2d"
 POWER2D_ARCHIVE_NAME = "density_power_2d.npz"
 DIAGNOSTIC_COLOR_SPECS = (
@@ -382,6 +385,9 @@ def analyze_suite_power(
     all_time = []
     all_power = []
     all_count = []
+    all_q2 = []
+    all_band_q2 = []
+    all_band_mode_count = []
     all_mean_sigma = []
     all_remap_time = []
     all_shear = []
@@ -406,16 +412,30 @@ def analyze_suite_power(
             common_k_edges = np.geomspace(kmin, kmax, int(k_bins) + 1)
         powers = []
         counts = []
+        quadrupoles = []
+        band_quadrupoles = []
+        band_mode_counts = []
         for time_index, shear in enumerate(two_dimensional["shear"]):
-            power, count = annular_average_power_2d(
-                two_dimensional["power_2d"][time_index],
+            power_2d = two_dimensional["power_2d"][time_index]
+            power, count, q2 = annular_power_statistics_2d(
+                power_2d,
                 two_dimensional["kx0"],
                 two_dimensional["ky"],
                 shear,
                 common_k_edges,
             )
+            band_q2, band_mode_count = band_power_quadrupole_2d(
+                power_2d,
+                two_dimensional["kx0"],
+                two_dimensional["ky"],
+                shear,
+                DEFAULT_SPECTRAL_BAND_PC,
+            )
             powers.append(power)
             counts.append(count)
+            quadrupoles.append(q2)
+            band_quadrupoles.append(band_q2)
+            band_mode_counts.append(band_mode_count)
         print(
             f"{model.name}: reduced {len(targets)} 2D spectra "
             f"({model_index}/{len(ranked)} models)",
@@ -427,6 +447,9 @@ def analyze_suite_power(
         all_time.append(two_dimensional["time"])
         all_power.append(powers)
         all_count.append(counts)
+        all_q2.append(quadrupoles)
+        all_band_q2.append(band_quadrupoles)
+        all_band_mode_count.append(band_mode_counts)
         all_mean_sigma.append(two_dimensional["mean_sigma_code"])
         all_remap_time.append(two_dimensional["remap_time"])
         all_shear.append(two_dimensional["shear"])
@@ -446,6 +469,8 @@ def analyze_suite_power(
         )
     power = np.asarray(all_power)
     count = np.asarray(all_count)
+    q2 = np.asarray(all_q2)
+    band_q2 = np.asarray(all_band_q2)
     data = {
         "model": np.asarray(model_names),
         "mean_sfr10": np.asarray(mean_sfr),
@@ -471,6 +496,19 @@ def analyze_suite_power(
             / (2.0 * np.pi)
         ),
         "mode_count": count,
+        "q2_real": q2.real,
+        "q2_imaginary": q2.imag,
+        "anisotropy_amplitude": np.abs(q2),
+        "anisotropy_angle_rad": 0.5 * np.angle(q2),
+        "anisotropy_definition": np.asarray(
+            "Q2=sum(P*exp(2i*phi))/sum(P); A2=abs(Q2); phi2=arg(Q2)/2"
+        ),
+        "anisotropy_band_wavelength_pc": np.asarray(DEFAULT_SPECTRAL_BAND_PC),
+        "anisotropy_band_q2_real_time": band_q2.real,
+        "anisotropy_band_q2_imaginary_time": band_q2.imag,
+        "anisotropy_band_amplitude_time": np.abs(band_q2),
+        "anisotropy_band_angle_rad_time": 0.5 * np.angle(band_q2),
+        "anisotropy_band_mode_count_time": np.asarray(all_band_mode_count),
         "mean_sigma_code": np.asarray(all_mean_sigma),
         "remap_time": np.asarray(all_remap_time),
         "shear": np.asarray(all_shear),
@@ -822,18 +860,23 @@ def integral_scale(k_edges, power):
     return float(numerator / denominator)
 
 
-def spectral_slope_alpha(k, power, pixel_size, scale):
-    """Fit ``P_delta proportional to k^-alpha`` for 10 dx < lambda < scale."""
+def spectral_slope_alpha(k, power, wavelength_bounds=DEFAULT_SPECTRAL_BAND_PC):
+    """Fit ``P_delta proportional to k^-alpha`` in a wavelength band."""
     k = np.asarray(k, dtype=float)
     power = np.asarray(power, dtype=float)
+    lower, upper = (float(value) for value in wavelength_bounds)
+    if not np.isfinite(lower + upper) or not 0.0 < lower < upper:
+        raise ValueError(
+            "wavelength bounds must be finite, positive, and increasing"
+        )
     wavelength = 2.0 * np.pi / k
     valid = (
         np.isfinite(k)
         & (k > 0.0)
         & np.isfinite(power)
         & (power > 0.0)
-        & (wavelength > 10.0 * float(pixel_size))
-        & (wavelength < float(scale))
+        & (wavelength > lower)
+        & (wavelength < upper)
     )
     count = int(np.count_nonzero(valid))
     if count < 3:
@@ -868,15 +911,6 @@ def spectrum_time_diagnostics(data):
     k = np.asarray(data["k_centers"], dtype=float)
     if power.shape[2] != k.size or k_edges.size != k.size + 1:
         raise ValueError("spectrum k coordinates do not match power_delta")
-    if "pixel_size_pc" in data:
-        pixel_size = np.asarray(data["pixel_size_pc"], dtype=float)
-    else:
-        pixel_size = np.full(power.shape[0], np.pi / k_edges[-1])
-    if pixel_size.ndim == 0:
-        pixel_size = np.full(power.shape[0], float(pixel_size))
-    if pixel_size.shape != (power.shape[0],):
-        raise ValueError("pixel_size_pc must be scalar or have one value per model")
-
     scales = np.full(power.shape[:2], np.nan)
     slopes = np.full(power.shape[:2], np.nan)
     fit_counts = np.zeros(power.shape[:2], dtype=int)
@@ -886,8 +920,6 @@ def spectrum_time_diagnostics(data):
             slope, fit_count = spectral_slope_alpha(
                 k,
                 power[model_index, time_index],
-                pixel_size[model_index],
-                scale,
             )
             scales[model_index, time_index] = scale
             slopes[model_index, time_index] = slope
@@ -912,6 +944,30 @@ def _finite_statistics(values):
         float(median),
         float(percentile16),
         float(percentile84),
+        int(finite.size),
+    )
+
+
+def _axial_angle_statistics(values):
+    """Return circular summaries for angles equivalent modulo pi."""
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (np.nan,) * 5 + (0,)
+    vector = np.mean(np.exp(2j * finite))
+    center = 0.5 * np.angle(vector)
+    residual = 0.5 * np.angle(np.exp(2j * (finite - center)))
+    percentile16, median_residual, percentile84 = np.percentile(
+        residual, [16.0, 50.0, 84.0]
+    )
+    low = min(center, center + percentile16)
+    high = max(center, center + percentile84)
+    return (
+        float(center),
+        float(np.abs(vector)),
+        float(center + median_residual),
+        float(low),
+        float(high),
         int(finite.size),
     )
 
@@ -949,7 +1005,7 @@ def spectrum_diagnostic_summary(
     for index, name in enumerate(names):
         mean_spectrum_scale = integral_scale(k_edges, mean_power[index])
         mean_spectrum_alpha, mean_spectrum_fit_count = spectral_slope_alpha(
-            k, mean_power[index], pixel_size[index], mean_spectrum_scale
+            k, mean_power[index]
         )
         use = (time[index] >= bounds[0]) & (time[index] <= bounds[1])
         (
@@ -972,6 +1028,27 @@ def spectrum_diagnostic_summary(
         ) = _finite_statistics(
             time_diagnostics["spectral_slope_alpha_time"][index, use]
         )
+        (
+            amplitude_mean,
+            amplitude_std,
+            amplitude_median,
+            amplitude_percentile16,
+            amplitude_percentile84,
+            amplitude_count,
+        ) = _finite_statistics(
+            np.asarray(data["anisotropy_band_amplitude_time"])[index, use]
+        )
+        (
+            angle_circular_mean,
+            angle_resultant_length,
+            angle_median,
+            angle_percentile16,
+            angle_percentile84,
+            angle_count,
+        ) = _axial_angle_statistics(
+            np.asarray(data["anisotropy_band_angle_rad_time"])[index, use]
+        )
+        angle_factor = 180.0 / np.pi
         parameters = model_parameters[name]
         omega = float(parameters["omega"])
         qshear = float(parameters["qshear"])
@@ -999,11 +1076,35 @@ def spectrum_diagnostic_summary(
                 "spectral_slope_alpha_time_percentile16": alpha_percentile16,
                 "spectral_slope_alpha_time_percentile84": alpha_percentile84,
                 "spectral_slope_alpha_time_count": alpha_count,
+                "anisotropy_band_amplitude_time_mean": amplitude_mean,
+                "anisotropy_band_amplitude_time_std": amplitude_std,
+                "anisotropy_band_amplitude_time_median": amplitude_median,
+                "anisotropy_band_amplitude_time_percentile16": (
+                    amplitude_percentile16
+                ),
+                "anisotropy_band_amplitude_time_percentile84": (
+                    amplitude_percentile84
+                ),
+                "anisotropy_band_amplitude_time_count": amplitude_count,
+                "anisotropy_band_angle_circular_mean_deg": (
+                    angle_circular_mean * angle_factor
+                ),
+                "anisotropy_band_angle_resultant_length": angle_resultant_length,
+                "anisotropy_band_angle_time_median_deg": (
+                    angle_median * angle_factor
+                ),
+                "anisotropy_band_angle_time_percentile16_deg": (
+                    angle_percentile16 * angle_factor
+                ),
+                "anisotropy_band_angle_time_percentile84_deg": (
+                    angle_percentile84 * angle_factor
+                ),
+                "anisotropy_band_angle_time_count": angle_count,
                 "integral_scale_pc": mean_spectrum_scale,
                 "spectral_slope_alpha": mean_spectrum_alpha,
                 "slope_fit_bin_count": mean_spectrum_fit_count,
-                "slope_fit_lambda_min_pc": 10.0 * float(pixel_size[index]),
-                "slope_fit_lambda_max_pc": mean_spectrum_scale,
+                "slope_fit_lambda_min_pc": DEFAULT_SPECTRAL_BAND_PC[0],
+                "slope_fit_lambda_max_pc": DEFAULT_SPECTRAL_BAND_PC[1],
                 "average_start": float(bounds[0]),
                 "average_stop": float(bounds[1]),
             }
@@ -1032,6 +1133,18 @@ def attach_spectrum_diagnostics(data, summary, time_diagnostics):
         "spectral_slope_alpha_time_percentile16",
         "spectral_slope_alpha_time_percentile84",
         "spectral_slope_alpha_time_count",
+        "anisotropy_band_amplitude_time_mean",
+        "anisotropy_band_amplitude_time_std",
+        "anisotropy_band_amplitude_time_median",
+        "anisotropy_band_amplitude_time_percentile16",
+        "anisotropy_band_amplitude_time_percentile84",
+        "anisotropy_band_amplitude_time_count",
+        "anisotropy_band_angle_circular_mean_deg",
+        "anisotropy_band_angle_resultant_length",
+        "anisotropy_band_angle_time_median_deg",
+        "anisotropy_band_angle_time_percentile16_deg",
+        "anisotropy_band_angle_time_percentile84_deg",
+        "anisotropy_band_angle_time_count",
         "integral_scale_pc",
         "spectral_slope_alpha",
         "slope_fit_bin_count",
@@ -1048,7 +1161,10 @@ def attach_spectrum_diagnostics(data, summary, time_diagnostics):
         "integral(E(k)*2pi/k dk)/integral(E(k) dk), E(k)=k*P_delta(k)/(2pi)"
     )
     augmented["spectral_slope_definition"] = np.asarray(
-        "P_delta(k) proportional to k^-alpha for 10*pixel_size < 2pi/k < L_in"
+        "P_delta(k) proportional to k^-alpha for 64 pc < 2pi/k < 256 pc"
+    )
+    augmented["anisotropy_band_definition"] = np.asarray(
+        "power-weighted Q2 over 64 pc < 2pi/k < 256 pc"
     )
     augmented["time_diagnostic_statistic_definition"] = np.asarray(
         "mean, population standard deviation, median, and 16th/84th "
@@ -1211,8 +1327,20 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
             "spectral_slope_alpha_time_percentile84",
             r"$\alpha$",
         ),
+        (
+            "anisotropy_band_amplitude_time_median",
+            "anisotropy_band_amplitude_time_percentile16",
+            "anisotropy_band_amplitude_time_percentile84",
+            r"$A_{2,64-256}$",
+        ),
+        (
+            "anisotropy_band_angle_circular_mean_deg",
+            "anisotropy_band_angle_time_percentile16_deg",
+            "anisotropy_band_angle_time_percentile84_deg",
+            r"$\phi_{2,64-256}\ [{\rm deg}]$",
+        ),
     )
-    fig, axes = plt.subplots(2, 3, figsize=(14.2, 8.2), sharex="col")
+    fig, axes = plt.subplots(4, 3, figsize=(14.2, 14.2), sharex="col")
     for column, (x_field, xlabel) in enumerate(x_specifications):
         x = summary[x_field].to_numpy(dtype=float)
         for row, (field, low_field, high_field, ylabel) in enumerate(
@@ -1242,7 +1370,9 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
                 norm,
             )
             axis.set_xscale("log")
-            if row == 1:
+            if row == 2:
+                axis.set_ylim(0.0, 1.0)
+            if row == 3:
                 axis.set_xlabel(xlabel)
             if column == 0:
                 axis.set_ylabel(ylabel)
@@ -1253,12 +1383,12 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
     colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
     colorbar.set_label(DIAGNOSTIC_COLOR_SPECS[0][3])
     fig.suptitle(
-        "Gas-column spectrum correlations: 200--600 Myr median "
-        "and 16th--84th percentiles",
+        "Gas-column spectrum and 64--256 pc quadrupole correlations: "
+        "200--600 Myr temporal summaries",
         fontsize=13,
     )
     fig.subplots_adjust(
-        left=0.075, right=0.985, bottom=0.22, top=0.92, hspace=0.32, wspace=0.22
+        left=0.075, right=0.985, bottom=0.14, top=0.94, hspace=0.26, wspace=0.22
     )
     fig.savefig(output, dpi=dpi, facecolor="white")
     plt.close(fig)
@@ -1268,16 +1398,17 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
 def create_spectrum_figure(
     k,
     power,
+    anisotropy_amplitude,
     ranked,
     *,
     title,
     cmap,
     norm,
     power_limits,
-    dimensionless_limits,
+    anisotropy_limits,
     box_size,
 ):
-    """Create the two-panel dimensional and dimensionless spectrum figure."""
+    """Create the two-panel angle-averaged power and anisotropy figure."""
     box_size = float(box_size)
     if not np.isfinite(box_size) or box_size <= 0.0:
         raise ValueError("box_size must be finite and positive")
@@ -1304,19 +1435,19 @@ def create_spectrum_figure(
         first = axes[0].plot(
             mode[valid], power[index, valid], color=color, linewidth=1.0, alpha=0.82
         )[0]
+        anisotropy_valid = np.isfinite(anisotropy_amplitude[index])
         second = axes[1].plot(
-            mode[valid],
-            k[valid] ** 2 * power[index, valid] / (2.0 * np.pi),
+            mode[anisotropy_valid],
+            anisotropy_amplitude[index, anisotropy_valid],
             color=color,
             linewidth=1.0,
             alpha=0.82,
         )[0]
         lines[index] = (first, second)
     axes[0].set_ylabel(r"$P_\delta(k)\;[\mathrm{pc}^2]$")
-    axes[1].set_ylabel(r"$k^2P_\delta(k)/(2\pi)$")
+    axes[1].set_ylabel(r"$A_2(k)=|Q_2(k)|$")
     for axis in axes:
         axis.set_xscale("log")
-        axis.set_yscale("log")
         axis.set_xlim(float(mode[0]), float(mode[-1]))
         axis.set_xlabel(r"dimensionless wavenumber $kL/(2\pi)$")
         axis.grid(alpha=0.18, which="both")
@@ -1337,8 +1468,9 @@ def create_spectrum_figure(
         top_axis.tick_params(direction="in")
     # Apply explicit limits after selecting log scales so a uniform first frame
     # cannot leave either axis at Matplotlib's empty-data defaults.
+    axes[0].set_yscale("log")
     axes[0].set_ylim(power_limits)
-    axes[1].set_ylim(dimensionless_limits)
+    axes[1].set_ylim(anisotropy_limits)
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
     colorbar.set_label(
@@ -1351,25 +1483,34 @@ def create_spectrum_figure(
 
 
 def plot_time_mean_spectrum(data, ranked, output, *, cmap_name=DEFAULT_CMAP, dpi=180):
-    """Plot each model's t=200--600 mean overdensity spectrum."""
+    """Plot mean power and median anisotropy over t=200--600."""
     k = np.asarray(data["k_centers"])
     power = time_mean_power(data, DEFAULT_SFR_RANGE)
+    time = np.asarray(data["time"], dtype=float)
+    anisotropy_time = np.asarray(data["anisotropy_amplitude"], dtype=float)
+    anisotropy = np.full((power.shape[0], power.shape[1]), np.nan)
+    for index in range(power.shape[0]):
+        use = (
+            (time[index] >= DEFAULT_SFR_RANGE[0])
+            & (time[index] <= DEFAULT_SFR_RANGE[1])
+        )
+        anisotropy[index] = np.nanmedian(anisotropy_time[index, use], axis=0)
     mean_sfr = np.asarray(data["mean_sfr10"])
     cmap, norm = sfr_colormap(mean_sfr, cmap_name, "log")
-    dimensionless = k[None, :] ** 2 * power / (2.0 * np.pi)
     box_size = float(np.asarray(data["box_size_pc"]).flat[0])
     fig, _, _, _ = create_spectrum_figure(
         k,
         power,
+        anisotropy,
         ranked,
         title=(
             r"Shear-aware gas-column overdensity spectrum: "
-            r"time mean over $200\leq t\leq600$"
+            r"mean $P_\delta$ and median $A_2$ over $200\leq t\leq600$"
         ),
         cmap=cmap,
         norm=norm,
         power_limits=_positive_limits(power),
-        dimensionless_limits=_positive_limits(dimensionless),
+        anisotropy_limits=(0.0, 1.0),
         box_size=box_size,
     )
     fig.savefig(output, dpi=dpi, facecolor="white")
@@ -1392,12 +1533,11 @@ def render_spectrum_movie(
     output_dir = Path(output_dir)
     k = np.asarray(data["k_centers"])
     power = np.asarray(data["power_delta"])
-    dimensionless = np.asarray(data["dimensionless_power"])
+    anisotropy = np.asarray(data["anisotropy_amplitude"])
     box_size = float(np.asarray(data["box_size_pc"]).flat[0])
     mode = k * box_size / (2.0 * np.pi)
     cmap, norm = sfr_colormap(data["mean_sfr10"], cmap_name, "log")
     power_limits = _positive_limits(power)
-    dimensionless_limits = _positive_limits(dimensionless)
     fig = axes = lines = title_text = None
     try:
         for time_index, target in enumerate(np.asarray(data["target_time"], dtype=int)):
@@ -1410,12 +1550,13 @@ def render_spectrum_movie(
                 fig, axes, lines, title_text = create_spectrum_figure(
                     k,
                     current,
+                    anisotropy[:, time_index, :],
                     ranked,
                     title=rf"Shear-aware gas-column overdensity spectrum: $t={target:g}$",
                     cmap=cmap,
                     norm=norm,
                     power_limits=power_limits,
-                    dimensionless_limits=dimensionless_limits,
+                    anisotropy_limits=(0.0, 1.0),
                     box_size=box_size,
                 )
             else:
@@ -1423,9 +1564,10 @@ def render_spectrum_movie(
                     values = current[model_index]
                     valid = np.isfinite(values) & (values > 0.0)
                     first.set_data(mode[valid], values[valid])
+                    anisotropy_values = anisotropy[model_index, time_index]
+                    anisotropy_valid = np.isfinite(anisotropy_values)
                     second.set_data(
-                        mode[valid],
-                        k[valid] ** 2 * values[valid] / (2.0 * np.pi),
+                        mode[anisotropy_valid], anisotropy_values[anisotropy_valid]
                     )
                 title_text.set_text(
                     rf"Shear-aware gas-column overdensity spectrum: $t={target:g}$"
@@ -1480,6 +1622,22 @@ def render_suite_density_spectrum(
         if not model_power2d_archive(model, proj_id).exists()
     ]
     rebuild_reduction = overwrite or overwrite_2d or bool(missing_power2d)
+    if archive.exists() and not rebuild_reduction:
+        with np.load(archive) as saved:
+            required_quadrupole_fields = {
+                "q2_real",
+                "q2_imaginary",
+                "anisotropy_amplitude",
+                "anisotropy_angle_rad",
+                "anisotropy_band_amplitude_time",
+                "anisotropy_band_angle_rad_time",
+            }
+            if not required_quadrupole_fields.issubset(saved.files):
+                rebuild_reduction = True
+                print(
+                    "Rebuilding annular reduction to add Q2 anisotropy diagnostics",
+                    flush=True,
+                )
     if missing_power2d:
         print(
             f"Generating {len(missing_power2d)} missing per-model 2D PSD archives",
@@ -1585,8 +1743,11 @@ def render_suite_density_spectrum(
     )
     if movie:
         movie_manifest = output_dir / "density_power_spectrum_movie_models.txt"
-        expected_manifest = "axis=kL/(2pi); top=lambda=2pi/k\n" + "\n".join(
-            str(name) for name in data["model"]
+        expected_manifest = (
+            "axis=kL/(2pi); top=lambda=2pi/k; second_panel=A2; version=2\n"
+            + "\n".join(
+                str(name) for name in data["model"]
+            )
         )
         movie_stale = (
             not movie_manifest.exists()

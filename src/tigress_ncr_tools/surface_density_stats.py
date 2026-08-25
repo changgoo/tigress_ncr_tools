@@ -270,8 +270,8 @@ def power_spectral_density_2d(
     return power_2d, kx0, ky
 
 
-def annular_average_power_2d(power_2d, kx0, ky, shear, k_edges):
-    """Annularly average a 2D PSD using physical shearing-wave wavenumbers."""
+def _physical_wavevector_geometry(power_2d, kx0, ky, shear):
+    """Validate a 2D PSD and return physical k and double-angle factors."""
     power_2d = np.asarray(power_2d, dtype=float)
     kx0 = np.asarray(kx0, dtype=float)
     ky = np.asarray(ky, dtype=float)
@@ -280,9 +280,38 @@ def annular_average_power_2d(power_2d, kx0, ky, shear, k_edges):
     if not np.all(np.isfinite(power_2d)) or np.any(power_2d < 0.0):
         raise ValueError("power_2d must be finite and nonnegative")
     kx_physical = kx0[None, :] + float(shear) * ky[:, None]
-    kmag = np.sqrt(kx_physical**2 + ky[:, None] ** 2)
+    ky_grid = np.broadcast_to(ky[:, None], power_2d.shape)
+    k_squared = kx_physical**2 + ky_grid**2
+    kmag = np.sqrt(k_squared)
+    cosine_2phi = np.divide(
+        kx_physical**2 - ky_grid**2,
+        k_squared,
+        out=np.zeros_like(k_squared),
+        where=k_squared > 0.0,
+    )
+    sine_2phi = np.divide(
+        2.0 * kx_physical * ky_grid,
+        k_squared,
+        out=np.zeros_like(k_squared),
+        where=k_squared > 0.0,
+    )
+    return power_2d, kmag, cosine_2phi, sine_2phi
+
+
+def annular_power_statistics_2d(power_2d, kx0, ky, shear, k_edges):
+    """Return annular mean power, mode count, and complex quadrupole Q2.
+
+    The quadrupole in each annulus is the power-weighted angular moment
+    ``sum(P exp(2 i phi)) / sum(P)`` evaluated with the instantaneous physical
+    shearing-wave coordinates.
+    """
+    power_2d, kmag, cosine_2phi, sine_2phi = _physical_wavevector_geometry(
+        power_2d, kx0, ky, shear
+    )
 
     edges = np.asarray(k_edges, dtype=float)
+    if edges.ndim != 1 or edges.size < 2 or np.any(np.diff(edges) <= 0.0):
+        raise ValueError("k_edges must be a strictly increasing 1D array")
     indices = np.digitize(kmag.ravel(), edges) - 1
     valid = (
         (indices >= 0)
@@ -295,7 +324,61 @@ def annular_average_power_2d(power_2d, kx0, ky, shear, k_edges):
     )
     radial = np.full(edges.size - 1, np.nan)
     np.divide(total, count, out=radial, where=count > 0)
+    quadrupole_real_total = np.bincount(
+        indices[valid],
+        weights=(power_2d * cosine_2phi).ravel()[valid],
+        minlength=edges.size - 1,
+    )
+    quadrupole_imaginary_total = np.bincount(
+        indices[valid],
+        weights=(power_2d * sine_2phi).ravel()[valid],
+        minlength=edges.size - 1,
+    )
+    q2_real = np.full(edges.size - 1, np.nan)
+    q2_imaginary = np.full(edges.size - 1, np.nan)
+    np.divide(quadrupole_real_total, total, out=q2_real, where=total > 0.0)
+    np.divide(
+        quadrupole_imaginary_total,
+        total,
+        out=q2_imaginary,
+        where=total > 0.0,
+    )
+    return radial, count, q2_real + 1j * q2_imaginary
+
+
+def annular_average_power_2d(power_2d, kx0, ky, shear, k_edges):
+    """Annularly average a 2D PSD using physical shearing-wave wavenumbers."""
+    radial, count, _ = annular_power_statistics_2d(
+        power_2d, kx0, ky, shear, k_edges
+    )
     return radial, count
+
+
+def band_power_quadrupole_2d(
+    power_2d, kx0, ky, shear, wavelength_bounds
+):
+    """Return the power-weighted Q2 over a physical wavelength band."""
+    lower, upper = (float(value) for value in wavelength_bounds)
+    if not np.isfinite(lower + upper) or not 0.0 < lower < upper:
+        raise ValueError(
+            "wavelength bounds must be finite, positive, and increasing"
+        )
+    power_2d, kmag, cosine_2phi, sine_2phi = _physical_wavevector_geometry(
+        power_2d, kx0, ky, shear
+    )
+    wavelength = np.divide(
+        2.0 * np.pi,
+        kmag,
+        out=np.full_like(kmag, np.inf),
+        where=kmag > 0.0,
+    )
+    use = (wavelength > lower) & (wavelength < upper) & (power_2d > 0.0)
+    total = float(np.sum(power_2d[use]))
+    if not np.isfinite(total) or total <= 0.0:
+        return complex(np.nan, np.nan), 0
+    real = float(np.sum(power_2d[use] * cosine_2phi[use]) / total)
+    imaginary = float(np.sum(power_2d[use] * sine_2phi[use]) / total)
+    return complex(real, imaginary), int(np.count_nonzero(use))
 
 
 def angle_averaged_power(
