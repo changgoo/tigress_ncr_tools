@@ -20,6 +20,7 @@ from .plot_suite_evolution import (
     nearest_indexed_projection,
     projection_number_index,
     rank_models_by_sfr,
+    short_model_name,
 )
 from .plot_suite_hst_evolution import (
     HISTORY_PARAMETER_COLOR_SPECS,
@@ -46,6 +47,9 @@ DEFAULT_TIME_RANGE = (0, 600)
 EXCLUDED_MODELS = frozenset({"R8_8pc_NCR_row0000"})
 DEFAULT_DIAGNOSTIC_NAME = "density_power_spectrum_integral_scale_slope"
 DEFAULT_CORRELATION_NAME = "density_power_spectrum_correlations"
+DEFAULT_POWER2D_MEAN_ARCHIVE = "density_power_2d_time_mean.npz"
+DEFAULT_POWER2D_MEAN_FIGURE = "density_power_2d_time_mean.png"
+DEFAULT_POWER2D_MODE_LIMIT = 16.0
 POWER2D_DIRECTORY = "density_power_2d"
 POWER2D_ARCHIVE_NAME = "density_power_2d.npz"
 DIAGNOSTIC_COLOR_SPECS = (
@@ -523,6 +527,278 @@ def time_mean_power(data, bounds=DEFAULT_SFR_RANGE):
             where=finite_count > 0,
         )
     return result
+
+
+def _uniform_center_edges(centers):
+    """Return bin edges for uniformly spaced cell centers."""
+    centers = np.asarray(centers, dtype=float)
+    if centers.ndim != 1 or centers.size < 2:
+        raise ValueError("centers must be a one-dimensional array with at least 2 cells")
+    spacing = float(np.median(np.diff(centers)))
+    if spacing <= 0.0 or not np.allclose(np.diff(centers), spacing):
+        raise ValueError("centers must be uniformly increasing")
+    return np.concatenate(
+        ([centers[0] - 0.5 * spacing], centers + 0.5 * spacing)
+    )
+
+
+def physical_time_mean_power_2d(
+    power_2d,
+    kx0,
+    ky,
+    shear,
+    box_size_xy,
+    use,
+    *,
+    chunk_size=50,
+):
+    """Deposit selected spectra on a fixed physical-k grid and average them."""
+    power_2d = np.asarray(power_2d, dtype=float)
+    kx0 = np.asarray(kx0, dtype=float)
+    ky = np.asarray(ky, dtype=float)
+    shear = np.asarray(shear, dtype=float)
+    box_size_xy = np.asarray(box_size_xy, dtype=float)
+    use = np.asarray(use, dtype=bool)
+    if power_2d.ndim != 3 or power_2d.shape[1:] != (ky.size, kx0.size):
+        raise ValueError("power_2d must have shape (time, ky, kx0)")
+    if shear.shape != (power_2d.shape[0],) or use.shape != shear.shape:
+        raise ValueError("shear and use must match the power time axis")
+    if box_size_xy.shape != (2,) or np.any(box_size_xy <= 0.0):
+        raise ValueError("box_size_xy must contain positive Lx and Ly")
+    if chunk_size <= 0 or not np.any(use):
+        raise ValueError("chunk_size must be positive and use must select snapshots")
+
+    lx, ly = box_size_xy
+    x_mode = kx0 * lx / (2.0 * np.pi)
+    y_mode = ky * ly / (2.0 * np.pi)
+    x_order = np.argsort(x_mode)
+    y_order = np.argsort(y_mode)
+    x_mode = x_mode[x_order]
+    y_mode = y_mode[y_order]
+    x_edges = _uniform_center_edges(x_mode)
+    y_edges = _uniform_center_edges(y_mode)
+    power_sum = np.zeros((y_mode.size, x_mode.size), dtype=float)
+    sample_count = np.zeros(power_sum.shape, dtype=np.int64)
+    selected_indices = np.flatnonzero(use)
+    for start in range(0, selected_indices.size, int(chunk_size)):
+        indices = selected_indices[start : start + int(chunk_size)]
+        selected = power_2d[indices][:, y_order][:, :, x_order]
+        x_physical = x_mode[None, None, :] + (
+            shear[indices, None, None]
+            * y_mode[None, :, None]
+            * (lx / ly)
+        )
+        x_physical = np.broadcast_to(x_physical, selected.shape)
+        y_physical = np.broadcast_to(y_mode[None, :, None], selected.shape)
+        finite = np.isfinite(selected) & (selected >= 0.0)
+        weighted, _, _ = np.histogram2d(
+            y_physical[finite],
+            x_physical[finite],
+            bins=(y_edges, x_edges),
+            weights=selected[finite],
+        )
+        counts, _, _ = np.histogram2d(
+            y_physical[finite],
+            x_physical[finite],
+            bins=(y_edges, x_edges),
+        )
+        power_sum += weighted
+        sample_count += counts.astype(np.int64)
+    mean_power = np.full(power_sum.shape, np.nan)
+    np.divide(
+        power_sum,
+        sample_count,
+        out=mean_power,
+        where=sample_count > 0,
+    )
+    return mean_power, sample_count, x_mode, y_mode
+
+
+def _time_mean_power2d_archive(task):
+    """Worker entry point for one model's physical-grid time mean."""
+    model, archive_path, bounds = task
+    archive = load_spectrum_archive(archive_path)
+    stored_model = str(np.asarray(archive["model"]).item())
+    if stored_model != model:
+        raise ValueError(f"2D archive model {stored_model} does not match {model}")
+    selection_time = np.asarray(
+        archive.get("target_time", archive["time"]), dtype=float
+    )
+    use = (selection_time >= bounds[0]) & (selection_time <= bounds[1])
+    mean_power, sample_count, x_mode, y_mode = physical_time_mean_power_2d(
+        archive["power_2d"],
+        archive["kx0"],
+        archive["ky"],
+        archive["shear"],
+        archive["box_size_xy_pc"],
+        use,
+    )
+    return {
+        "model": model,
+        "mean_power_2d": mean_power.astype(np.float32),
+        "mode_sample_count": sample_count.astype(np.int32),
+        "kx_mode": x_mode,
+        "ky_mode": y_mode,
+        "time_sample_count": int(np.count_nonzero(use)),
+        "box_size_xy_pc": np.asarray(archive["box_size_xy_pc"], dtype=float),
+    }
+
+
+def calculate_suite_time_mean_power_2d(
+    data,
+    *,
+    bounds=DEFAULT_SFR_RANGE,
+    workers=1,
+    output=None,
+):
+    """Build physical-grid time-mean 2D spectra from every model cache."""
+    model_names = np.asarray(data["model"]).astype(str)
+    archives = np.asarray(data["power2d_archive"]).astype(str)
+    if archives.shape != model_names.shape:
+        raise ValueError("power2d archive paths must match the model axis")
+    if workers <= 0:
+        raise ValueError("workers must be positive")
+    tasks = [
+        (model, archive_path, tuple(bounds))
+        for model, archive_path in zip(model_names, archives)
+    ]
+    if int(workers) == 1:
+        model_results = [_time_mean_power2d_archive(task) for task in tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=int(workers)) as executor:
+            model_results = list(executor.map(_time_mean_power2d_archive, tasks))
+    means = []
+    counts = []
+    time_counts = []
+    common_x_mode = common_y_mode = None
+    box_sizes = []
+    for result in model_results:
+        model = result["model"]
+        x_mode = result["kx_mode"]
+        y_mode = result["ky_mode"]
+        if common_x_mode is None:
+            common_x_mode = x_mode
+            common_y_mode = y_mode
+        elif not (
+            np.allclose(common_x_mode, x_mode) and np.allclose(common_y_mode, y_mode)
+        ):
+            raise ValueError("2D Fourier grids differ between suite models")
+        means.append(result["mean_power_2d"])
+        counts.append(result["mode_sample_count"])
+        time_counts.append(result["time_sample_count"])
+        box_sizes.append(result["box_size_xy_pc"])
+        print(f"Averaged physical 2D spectra for {model}", flush=True)
+    result = {
+        "model": model_names,
+        "mean_sfr10": np.asarray(data["mean_sfr10"], dtype=float),
+        "time_bounds": np.asarray(bounds, dtype=float),
+        "time_sample_count": np.asarray(time_counts, dtype=int),
+        "mean_power_2d": np.asarray(means),
+        "mode_sample_count": np.asarray(counts),
+        "kx_mode": common_x_mode,
+        "ky_mode": common_y_mode,
+        "box_size_xy_pc": np.asarray(box_sizes),
+        "power2d_archive": archives,
+        "power_unit": np.asarray("pc^2"),
+        "coordinate_definition": np.asarray(
+            "kx_mode=kx*Lx/(2pi), ky_mode=ky*Ly/(2pi)"
+        ),
+        "physical_k_mapping": np.asarray("kx=kx0+shear*ky"),
+        "deposition": np.asarray("arithmetic mean after Cartesian nearest-bin deposition"),
+        "excluded_models": np.asarray(sorted(EXCLUDED_MODELS)),
+    }
+    if output is not None:
+        _atomic_savez(output, **result)
+        print(f"Wrote {output}", flush=True)
+    return result
+
+
+def plot_suite_time_mean_power_2d(
+    data,
+    ranked,
+    output,
+    *,
+    mode_limit=DEFAULT_POWER2D_MODE_LIMIT,
+    cmap_name=DEFAULT_CMAP,
+    dpi=180,
+):
+    """Plot the SFR-ranked 4-by-8 suite of physical time-mean 2D spectra."""
+    if list(np.asarray(data["model"]).astype(str)) != [
+        model.name for model, _ in ranked
+    ]:
+        raise ValueError("2D mean archive and ranked model ordering differ")
+    x_mode = np.asarray(data["kx_mode"], dtype=float)
+    y_mode = np.asarray(data["ky_mode"], dtype=float)
+    power = np.asarray(data["mean_power_2d"], dtype=float).copy()
+    if mode_limit <= 0.0:
+        raise ValueError("mode_limit must be positive")
+    x_use = np.abs(x_mode) <= mode_limit
+    y_use = np.abs(y_mode) <= mode_limit
+    if np.count_nonzero(x_use) < 2 or np.count_nonzero(y_use) < 2:
+        raise ValueError("mode_limit selects fewer than two Fourier cells")
+    origin_x = int(np.argmin(np.abs(x_mode)))
+    origin_y = int(np.argmin(np.abs(y_mode)))
+    power[:, origin_y, origin_x] = np.nan
+    displayed = power[:, y_use][:, :, x_use]
+    limits = _positive_limits(displayed, percentiles=(2.0, 99.8))
+    norm = mpl.colors.LogNorm(vmin=limits[0], vmax=limits[1])
+    colormap = mpl.colormaps[cmap_name].copy()
+    colormap.set_bad("white")
+    x_display = x_mode[x_use]
+    y_display = y_mode[y_use]
+    x_edges = _uniform_center_edges(x_display)
+    y_edges = _uniform_center_edges(y_display)
+    fig, axes = plt.subplots(
+        4,
+        8,
+        figsize=(18.2, 10.0),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    image = None
+    for index, axis in enumerate(axes.flat):
+        if index >= len(ranked):
+            axis.axis("off")
+            continue
+        model, _ = ranked[index]
+        image = axis.imshow(
+            displayed[index],
+            origin="lower",
+            extent=(x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]),
+            cmap=colormap,
+            norm=norm,
+            interpolation="nearest",
+            aspect="equal",
+        )
+        axis.axhline(0.0, color="white", alpha=0.16, linewidth=0.45)
+        axis.axvline(0.0, color="white", alpha=0.16, linewidth=0.45)
+        axis.set_title(f"{index + 1}. {short_model_name(model)}", fontsize=7.5)
+        axis.tick_params(direction="in", labelsize=7, top=True, right=True)
+    if image is None:
+        raise ValueError("no models available for the 2D spectrum figure")
+    bounds = np.asarray(data["time_bounds"], dtype=float)
+    fig.supxlabel(r"physical $k_xL_x/(2\pi)$")
+    fig.supylabel(r"physical $k_yL_y/(2\pi)$")
+    fig.suptitle(
+        "Shear-aware gas-column 2D power spectra: "
+        f"{bounds[0]:g}--{bounds[1]:g} Myr arithmetic means",
+        fontsize=13,
+    )
+    color_axis = fig.add_axes((0.36, 0.045, 0.28, 0.018))
+    colorbar = fig.colorbar(image, cax=color_axis, orientation="horizontal")
+    colorbar.set_label(r"$\langle P_{\delta,2{\rm D}}\rangle_t\ [{\rm pc}^2]$")
+    fig.subplots_adjust(
+        left=0.055,
+        right=0.995,
+        bottom=0.09,
+        top=0.93,
+        hspace=0.28,
+        wspace=0.08,
+    )
+    fig.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(fig)
+    print(f"Wrote {output}", flush=True)
 
 
 def integral_scale(k_edges, power):
@@ -1179,6 +1455,7 @@ def render_suite_density_spectrum(
     tukey_alpha=0.25,
     pad_factor=1.0,
     cmap_name=DEFAULT_CMAP,
+    power2d_mode_limit=DEFAULT_POWER2D_MODE_LIMIT,
     dpi=180,
     overwrite=False,
     overwrite_2d=False,
@@ -1254,6 +1531,34 @@ def render_suite_density_spectrum(
     cmap, norm = plot_time_mean_spectrum(
         data, ranked, summary, cmap_name=cmap_name, dpi=dpi
     )
+    mean_power2d_path = output_dir / DEFAULT_POWER2D_MEAN_ARCHIVE
+    mean_power2d = None
+    if mean_power2d_path.exists() and not (overwrite or overwrite_2d):
+        candidate = load_spectrum_archive(mean_power2d_path)
+        candidate_bounds = np.asarray(candidate.get("time_bounds", ()), dtype=float)
+        if (
+            list(np.asarray(candidate.get("model", ())).astype(str))
+            == [model.name for model, _ in ranked]
+            and candidate_bounds.shape == (2,)
+            and np.allclose(candidate_bounds, sfr_bounds)
+        ):
+            mean_power2d = candidate
+            print(f"Loading existing {mean_power2d_path}", flush=True)
+    if mean_power2d is None:
+        mean_power2d = calculate_suite_time_mean_power_2d(
+            data,
+            bounds=sfr_bounds,
+            workers=workers,
+            output=mean_power2d_path,
+        )
+    plot_suite_time_mean_power_2d(
+        mean_power2d,
+        ranked,
+        output_dir / DEFAULT_POWER2D_MEAN_FIGURE,
+        mode_limit=power2d_mode_limit,
+        cmap_name=cmap_name,
+        dpi=dpi,
+    )
     write_model_colors(
         ranked,
         output_dir / "model_sfr_colors.csv",
@@ -1316,6 +1621,9 @@ def main(argv=None):
     parser.add_argument("--tukey-alpha", type=float, default=0.25)
     parser.add_argument("--pad-factor", type=float, default=1.0)
     parser.add_argument("--cmap", default=DEFAULT_CMAP)
+    parser.add_argument(
+        "--power2d-mode-limit", type=float, default=DEFAULT_POWER2D_MODE_LIMIT
+    )
     parser.add_argument("--dpi", type=int, default=180)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--overwrite-2d", action="store_true")
@@ -1333,6 +1641,8 @@ def main(argv=None):
         parser.error("--tukey-alpha must be between zero and one")
     if args.pad_factor < 1.0:
         parser.error("--pad-factor must be at least one")
+    if args.power2d_mode_limit <= 0.0:
+        parser.error("--power2d-mode-limit must be positive")
     if args.dpi <= 0 or args.fps <= 0:
         parser.error("--dpi and --fps must be positive")
     render_suite_density_spectrum(
@@ -1349,6 +1659,7 @@ def main(argv=None):
         tukey_alpha=args.tukey_alpha,
         pad_factor=args.pad_factor,
         cmap_name=args.cmap,
+        power2d_mode_limit=args.power2d_mode_limit,
         dpi=args.dpi,
         overwrite=args.overwrite,
         overwrite_2d=args.overwrite_2d,

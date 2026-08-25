@@ -133,6 +133,12 @@ spectra and all radial diagnostics are then reduced from those caches. Use
 `--workers N` for model-level parallel generation and `--overwrite-2d` only
 when the projection maps or transform settings change.
 
+The command also deposits the 200--600 Myr spectra onto a common physical
+`(kx,ky)` grid and writes `density_power_2d_time_mean.npz` plus the SFR-ranked
+4-by-8 `density_power_2d_time_mean.png`. The figure uses a common logarithmic
+`plasma` scale and defaults to `|kx*Lx/(2*pi)|,|ky*Ly/(2*pi)| <= 16`; change
+the view with `--power2d-mode-limit`.
+
 The mathematical definition, discrete normalization, shear-coordinate
 derivation, and archive-field inventory are documented in
 [`docs/density_power_spectrum.md`](docs/density_power_spectrum.md).

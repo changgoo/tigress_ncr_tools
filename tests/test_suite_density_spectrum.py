@@ -12,6 +12,8 @@ from tigress_ncr_tools.plot_suite_density_spectrum import (
     exclude_corrupted_archive_models,
     integral_scale,
     overdensity_power,
+    physical_time_mean_power_2d,
+    plot_suite_time_mean_power_2d,
     plot_spectrum_diagnostic_relations,
     plot_spectrum_correlations,
     plot_time_mean_spectrum,
@@ -65,6 +67,35 @@ def test_time_mean_power_selects_requested_interval():
     }
     result = time_mean_power(data, (200.0, 600.0))
     np.testing.assert_allclose(result, [[3.0, 6.0], [8.0, 16.0]])
+
+
+def test_time_mean_2d_power_is_deposited_at_physical_sheared_kx():
+    size = 8
+    length = float(size)
+    kx0 = 2.0 * np.pi * np.fft.fftfreq(size)
+    ky = 2.0 * np.pi * np.fft.fftfreq(size)
+    x_mode = kx0 * length / (2.0 * np.pi)
+    y_mode = ky * length / (2.0 * np.pi)
+    ix = int(np.flatnonzero(np.isclose(x_mode, 1.0))[0])
+    iy = int(np.flatnonzero(np.isclose(y_mode, 1.0))[0])
+    power = np.zeros((2, size, size))
+    power[:, iy, ix] = 10.0
+    mean, count, sorted_x, sorted_y = physical_time_mean_power_2d(
+        power,
+        kx0,
+        ky,
+        np.asarray([0.0, 1.0]),
+        np.asarray([length, length]),
+        np.asarray([True, True]),
+        chunk_size=1,
+    )
+    output_y = int(np.flatnonzero(np.isclose(sorted_y, 1.0))[0])
+    output_x1 = int(np.flatnonzero(np.isclose(sorted_x, 1.0))[0])
+    output_x2 = int(np.flatnonzero(np.isclose(sorted_x, 2.0))[0])
+    assert mean[output_y, output_x1] == pytest.approx(5.0)
+    assert mean[output_y, output_x2] == pytest.approx(5.0)
+    assert count[output_y, output_x1] == 2
+    assert count[output_y, output_x2] == 2
 
 
 def test_integral_scale_uses_shell_energy_and_bin_widths():
@@ -186,6 +217,25 @@ def test_time_mean_spectrum_figure(tmp_path):
     }
     output = tmp_path / "spectrum.png"
     plot_time_mean_spectrum(data, ranked, output, dpi=60)
+    assert output.stat().st_size > 0
+
+
+def test_time_mean_2d_spectrum_suite_figure(tmp_path):
+    ranked = [(Path("high"), 1.0e-2), (Path("low"), 1.0e-3)]
+    modes = np.arange(-4.0, 4.0)
+    yy, xx = np.meshgrid(modes, modes, indexing="ij")
+    base = 1.0 / (1.0 + xx**2 + 2.0 * yy**2)
+    data = {
+        "model": np.asarray(["high", "low"]),
+        "time_bounds": np.asarray([200.0, 600.0]),
+        "kx_mode": modes,
+        "ky_mode": modes,
+        "mean_power_2d": np.asarray([base, 0.5 * base]),
+    }
+    output = tmp_path / "power2d.png"
+    plot_suite_time_mean_power_2d(
+        data, ranked, output, mode_limit=3.0, dpi=40
+    )
     assert output.stat().st_size > 0
 
 

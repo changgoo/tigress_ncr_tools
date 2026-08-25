@@ -197,6 +197,23 @@ The stored coordinate pair is deliberately \((k_{x,0},k_y)\), because the
 physical \(k_x\) is time dependent. Any 2D visualization or anisotropy
 measurement must apply the stored shear before interpreting orientation.
 
+For the time-mean 2D visualization, every selected snapshot is deposited onto
+a common Cartesian grid in the physical dimensionless coordinates
+
+\[
+n_x \equiv \frac{k_xL_x}{2\pi},
+\qquad
+n_y \equiv \frac{k_yL_y}{2\pi}.
+\]
+
+The deposition uses \(k_x=k_{x,0}+s(t)k_y\), accumulates power and contributing
+mode count separately, and divides the two after processing all snapshots.
+This avoids averaging incompatible sheared-coordinate pixels. The numerical
+mean archive retains the full Fourier grid; the default figure displays
+\(|n_x|\leq16\) and \(|n_y|\leq16\) so that the dynamically important central
+structure remains visible in the 4-by-8 layout. The display range can be
+changed with `--power2d-mode-limit` without recomputing the mean archive.
+
 ## 5. Dimensionless variance spectrum
 
 With the continuous Fourier convention corresponding to the estimator above,
@@ -396,6 +413,11 @@ The default output directory is
 - `density_power_spectrum_time_mean.png`: all-model comparison of the
   \(t=200\)--600 mean dimensional and dimensionless spectra. The lower axis
   is \(kL/(2\pi)\), and the upper axis is \(\lambda=2\pi/k\) in pc.
+- `density_power_2d_time_mean.npz`: full-grid physical-coordinate 2D power
+  means, mode-deposition counts, coordinate arrays, source archive paths, and
+  averaging metadata for all 31 clean models.
+- `density_power_2d_time_mean.png`: SFR-ranked 4-by-8 map of the 200--600 Myr
+  physical-coordinate means, using one logarithmic `plasma` intensity scale.
 - `density_power_spectrum_integral_scale_slope.csv`: one row per clean model
   containing SFR, \(\Omega\), \(\kappa\), \(\Sigma_*/(2H_*)\), \(q\), the
   temporal median, 16th and 84th percentiles, mean, and standard deviation of
@@ -451,7 +473,7 @@ The default output directory is
 The cached 2D spectra make anisotropy measurements possible without rereading
 maps. The preferred primary statistic is the scale-dependent complex
 quadrupole in physical Fourier coordinates. For modes in radial bin \(a\), let
-\(\phi=\arctan(k_y/k_x)\) and define
+\(\phi_j\) be the polar angle of \((k_{x,j},k_{y,j})\) and define
 
 \[
 Q_2(k_a) \equiv
@@ -469,6 +491,26 @@ physical-wavevector direction is
 The factor of two is appropriate because the power of a real field is
 unchanged under \(\boldsymbol{k}\) to \(-\boldsymbol{k}\). This statistic is
 compact, rotationally well defined, and naturally scale dependent.
+
+The quadrupole should be evaluated for every instantaneous spectrum and only
+then summarized in time. Taking \(|Q_2|\) from the time-mean 2D map measures
+anisotropy that remains aligned in the simulation frame; it can hide a strong
+instantaneous anisotropy whose position angle changes with time. For the same
+reason, the preferred temporal summary is the median and 16th--84th
+percentiles of \(A_2(k,t)\), while \(\phi_2\) requires axial circular
+statistics based on \(\exp(2i\phi_2)\).
+
+Finite annuli have a positive noise floor in \(|Q_2|\), even for isotropic
+power. An angle-randomized null calculation on the same discrete mode lattice
+can define the debiased amplitude
+
+\[
+A_{2,{\rm deb}}^2 \equiv
+\max\left[|Q_2|^2-\left\langle|Q_{2,{\rm null}}|^2\right\rangle,0\right].
+\]
+
+This correction, along with a minimum effective-mode count, is preferable to
+interpreting small raw quadrupole amplitudes as physical anisotropy.
 
 A complementary integrated diagnostic is the power-weighted angular tensor
 
@@ -496,14 +538,17 @@ than the primary statistic.
 
 Recommended implementation order:
 
-1. calculate \(A_2(k,t)\) and \(\phi_2(k,t)\) in the same radial bins as the
-   1D spectrum;
-2. integrate the angular tensor over the slope-fit wavelength interval
-   \(10\Delta x<\lambda<L_{\rm in}(t)\);
+1. calculate debiased \(A_2(k,t)\) and \(\phi_2(k,t)\) in the same radial bins
+   as the 1D spectrum;
+2. calculate one band-integrated quadrupole over the slope-fit wavelength
+   interval \(10\Delta x<\lambda<L_{\rm in}(t)\); the angular tensor provides
+   an equivalent scalar amplitude and principal direction;
 3. summarize each statistic over 200--600 Myr with its median and
    16th--84th percentiles;
 4. add radial-versus-azimuthal wedge ratios only as a diagnostic of the
    quadrupole interpretation.
 
 All of these calculations must use \(k_x=k_{x,0}+s(t)k_y\), not the stored
-unsheared \(k_{x,0}\).
+unsheared \(k_{x,0}\). The Fourier-space preferred direction is normal to an
+elongated real-space structure, so a filament orientation differs from
+\(\phi_2\) by \(\pi/2\).
