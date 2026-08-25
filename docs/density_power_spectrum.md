@@ -485,6 +485,15 @@ The default output directory is
 - The annular spectrum compresses directional information. An anisotropic
   two-dimensional spectrum or separate \((k_x,k_y)\) diagnostics would be
   required to study preferred directions directly.
+- The separate box-size experiment changes the fundamental mode, available
+  low-wavenumber support, finite-mode quadrupole floor, and spatial volume over
+  which orientations can cancel. In contrast, the 31-model TIGRESS-NCR
+  parameter suite holds the box size, pixel scale, Fourier lattice, radial
+  edges, slope interval, and quadrupole support fixed. Systematic trends within
+  that controlled suite can therefore reflect real responses to the varied
+  physical parameters even when an absolute diagnostic is box-size sensitive.
+  Alternative convergence diagnostics are recorded in
+  [box_size_density_power_spectrum.md](box_size_density_power_spectrum.md).
 
 ## 11. Quadrupole anisotropy diagnostics
 
