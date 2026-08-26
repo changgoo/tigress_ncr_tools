@@ -106,6 +106,47 @@ SUMMARY_FIELDS = (
     "alfven_perturbed_3d_hgas",
 )
 
+PHASE_PARAMETER_SPECS = (
+    ("stellar_surface_density", r"$\Sigma_*$"),
+    ("stellar_scale_height", r"$H_*$"),
+    ("omega", r"$\Omega$"),
+    ("qshear", r"$q$"),
+    ("kappa", r"$\kappa$"),
+    ("stellar_midplane_density", r"$\rho_*$"),
+)
+PHASE_SUMMARY_LABELS = {
+    "mass_fraction_box": "mass fraction: box",
+    "volume_fraction_box": "volume fraction: box",
+    "mass_fraction_hgas": "mass fraction: Hgas",
+    "volume_fraction_hgas": "volume fraction: Hgas",
+    "mass_scale_height_pc": "mass RMS height",
+    "volume_scale_height_pc": "volume RMS height",
+    "sigma_3d_box": "sigma3D: box",
+    "sigma_3d_hgas": "sigma3D: Hgas",
+    "alfven_mean_3d_box": "mean-field vA: box",
+    "alfven_perturbed_3d_box": "perturbed vA: box",
+    "alfven_mean_3d_hgas": "mean-field vA: Hgas",
+    "alfven_perturbed_3d_hgas": "perturbed vA: Hgas",
+}
+PLOTTED_PHASE_SUMMARY_FIELDS = tuple(PHASE_SUMMARY_LABELS)
+PHASE_CORRELATION_FAMILIES = (
+    (
+        "fractions",
+        PLOTTED_PHASE_SUMMARY_FIELDS[:4],
+        "Phase-fraction correlations with environmental parameters",
+    ),
+    (
+        "scale_heights",
+        PLOTTED_PHASE_SUMMARY_FIELDS[4:6],
+        "Phase scale-height correlations with environmental parameters",
+    ),
+    (
+        "dynamics",
+        PLOTTED_PHASE_SUMMARY_FIELDS[6:],
+        "Phase speed correlations with environmental parameters",
+    ),
+)
+
 
 def discover_phase_models(suite, model_glob=DEFAULT_MODEL_GLOB):
     """Return suite models with primary histories and required zprof phases."""
@@ -463,6 +504,8 @@ def phase_model_summary(data, ranked, *, bounds=DEFAULT_SUMMARY_RANGE):
                 "mean_sfr10": float(mean_sfr),
                 "omega": omega,
                 "kappa": np.sqrt(2.0 * (2.0 - qshear)) * omega,
+                "stellar_surface_density": float(parameters["stellar_surface_density"]),
+                "stellar_scale_height": float(parameters["stellar_scale_height"]),
                 "stellar_midplane_density": float(
                     parameters["stellar_midplane_density"]
                 ),
@@ -489,6 +532,295 @@ def _add_sfr_colorbar(fig, ranked, cmap, norm, bounds):
         rf"$\langle\Sigma_{{\rm SFR,10}}\rangle_{{{bounds[0]:g}-{bounds[1]:g}}}$ "
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
+
+
+def _plot_phase_summary_axis(
+    axis,
+    summary,
+    ranked,
+    series,
+    cmap,
+    norm,
+    *,
+    ylabel,
+    log=True,
+):
+    """Plot model temporal medians and percentile ranges by phase."""
+    model_names = [model.name for model, _ in ranked]
+    model_offset = {
+        name: offset
+        for name, offset in zip(
+            model_names, np.linspace(-0.25, 0.25, len(model_names))
+        )
+    }
+    for series_index, (field, label, marker) in enumerate(series):
+        centers = []
+        series_shift = (series_index - 0.5 * (len(series) - 1)) * 0.055
+        for phase_index, phase in enumerate(PHASES):
+            selected = summary[summary["phase"] == phase.key].set_index("model")
+            selected = selected.reindex(model_names)
+            median = selected[f"{field}_time_median"].to_numpy(dtype=float)
+            low = selected[f"{field}_time_percentile16"].to_numpy(dtype=float)
+            high = selected[f"{field}_time_percentile84"].to_numpy(dtype=float)
+            color_values = selected["mean_sfr10"].to_numpy(dtype=float)
+            x = np.asarray(
+                [
+                    phase_index + model_offset[name] + series_shift
+                    for name in model_names
+                ]
+            )
+            valid = (
+                np.isfinite(median)
+                & np.isfinite(low)
+                & np.isfinite(high)
+                & np.isfinite(color_values)
+                & (low <= median)
+                & (median <= high)
+            )
+            if log:
+                valid &= (median > 0.0) & (low > 0.0) & (high > 0.0)
+            for xv, center, lower, upper, color_value in zip(
+                x[valid],
+                median[valid],
+                low[valid],
+                high[valid],
+                color_values[valid],
+            ):
+                axis.errorbar(
+                    xv,
+                    center,
+                    yerr=np.asarray([[center - lower], [upper - center]]),
+                    color=cmap(norm(color_value)),
+                    alpha=0.38,
+                    linewidth=0.55,
+                    zorder=1,
+                )
+            axis.scatter(
+                x[valid],
+                median[valid],
+                c=color_values[valid],
+                cmap=cmap,
+                norm=norm,
+                marker=marker,
+                s=18,
+                edgecolor="black",
+                linewidth=0.18,
+                alpha=0.82,
+                zorder=2,
+            )
+            centers.append(np.nanmedian(median[valid]))
+        axis.plot(
+            np.arange(len(PHASES)) + series_shift,
+            centers,
+            color="black",
+            marker=marker,
+            markersize=5,
+            linewidth=1.0,
+            label=label,
+            zorder=3,
+        )
+    axis.set_xticks(np.arange(len(PHASES)), [phase.label for phase in PHASES])
+    axis.tick_params(axis="x", labelrotation=28)
+    axis.set_ylabel(ylabel)
+    if log:
+        axis.set_yscale("log")
+    axis.grid(alpha=0.16, which="both")
+    axis.tick_params(direction="in", top=True, right=True)
+    if len(series) > 1:
+        axis.legend(fontsize=8, loc="best")
+
+
+def plot_phase_model_summaries(
+    summary,
+    ranked,
+    output_dir,
+    *,
+    bounds=DEFAULT_SUMMARY_RANGE,
+    sfr_bounds=DEFAULT_SFR_RANGE,
+    dpi=180,
+):
+    """Plot temporal phase summaries across the model ensemble."""
+    cmap, norm = sfr_colormap([value for _, value in ranked], DEFAULT_CMAP, "log")
+    fraction_specs = (
+        ("mass_fraction_box", "mass fraction: whole box"),
+        ("volume_fraction_box", "volume fraction: whole box"),
+        ("mass_fraction_hgas", r"mass fraction: $|z|\leq H_{\rm gas}$"),
+        ("volume_fraction_hgas", r"volume fraction: $|z|\leq H_{\rm gas}$"),
+    )
+    figure, axes = plt.subplots(2, 2, figsize=(13.2, 9.2))
+    for axis, (field, ylabel) in zip(axes.flat, fraction_specs):
+        _plot_phase_summary_axis(
+            axis,
+            summary,
+            ranked,
+            ((field, "temporal median", "o"),),
+            cmap,
+            norm,
+            ylabel=ylabel,
+        )
+    figure.suptitle(
+        f"Six-phase fraction summaries: {bounds[0]:g}--{bounds[1]:g} Myr",
+        fontsize=14,
+    )
+    _add_sfr_colorbar(figure, ranked, cmap, norm, sfr_bounds)
+    figure.subplots_adjust(
+        left=0.08, right=0.99, bottom=0.13, top=0.93, hspace=0.31, wspace=0.24
+    )
+    output = Path(output_dir) / "phase_fraction_model_summary.png"
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
+
+    dynamic_specs = (
+        (
+            (("mass_scale_height_pc", "mass weighted", "o"),),
+            "mass RMS height [pc]",
+        ),
+        (
+            (("volume_scale_height_pc", "volume weighted", "o"),),
+            "volume RMS height [pc]",
+        ),
+        ((("sigma_3d_box", "whole box", "o"),), r"$\sigma_{\rm 3D}$ [km/s]"),
+        (
+            (("sigma_3d_hgas", r"$|z|\leq H_{\rm gas}$", "o"),),
+            r"$\sigma_{\rm 3D}$ [km/s]",
+        ),
+        (
+            (
+                ("alfven_mean_3d_box", "mean field", "o"),
+                ("alfven_perturbed_3d_box", "perturbed field", "^"),
+            ),
+            r"$v_{\rm A,3D}$: whole box [km/s]",
+        ),
+        (
+            (
+                ("alfven_mean_3d_hgas", "mean field", "o"),
+                ("alfven_perturbed_3d_hgas", "perturbed field", "^"),
+            ),
+            r"$v_{\rm A,3D}$: $|z|\leq H_{\rm gas}$ [km/s]",
+        ),
+    )
+    dynamic_titles = (
+        "mass-weighted scale height",
+        "volume-weighted scale height",
+        "velocity dispersion: whole box",
+        r"velocity dispersion: $|z|\leq H_{\rm gas}$",
+        "Alfvén speeds: whole box",
+        r"Alfvén speeds: $|z|\leq H_{\rm gas}$",
+    )
+    figure, axes = plt.subplots(3, 2, figsize=(13.2, 13.0))
+    for axis, (series, ylabel), panel_title in zip(
+        axes.flat, dynamic_specs, dynamic_titles
+    ):
+        _plot_phase_summary_axis(
+            axis, summary, ranked, series, cmap, norm, ylabel=ylabel
+        )
+        axis.set_title(panel_title)
+    figure.suptitle(
+        f"Six-phase structure and speed summaries: "
+        f"{bounds[0]:g}--{bounds[1]:g} Myr",
+        fontsize=14,
+    )
+    _add_sfr_colorbar(figure, ranked, cmap, norm, sfr_bounds)
+    figure.subplots_adjust(
+        left=0.08, right=0.99, bottom=0.10, top=0.945, hspace=0.34, wspace=0.24
+    )
+    output = Path(output_dir) / "phase_structure_speed_model_summary.png"
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
+
+
+def phase_parameter_correlations(summary):
+    """Return Spearman model correlations for plotted phase summaries."""
+    rows = []
+    for phase in PHASES:
+        selected = summary[summary["phase"] == phase.key]
+        for field in PLOTTED_PHASE_SUMMARY_FIELDS:
+            y = selected[f"{field}_time_median"].to_numpy(dtype=float)
+            for parameter, parameter_label in PHASE_PARAMETER_SPECS:
+                x = selected[parameter].to_numpy(dtype=float)
+                valid = np.isfinite(x) & np.isfinite(y)
+                count = int(np.count_nonzero(valid))
+                if count >= 3:
+                    x_rank = pd.Series(x[valid]).rank(method="average")
+                    y_rank = pd.Series(y[valid]).rank(method="average")
+                    coefficient = float(x_rank.corr(y_rank))
+                else:
+                    coefficient = np.nan
+                rows.append(
+                    {
+                        "phase": phase.key,
+                        "phase_label": phase.label,
+                        "quantity": field,
+                        "quantity_label": PHASE_SUMMARY_LABELS[field],
+                        "parameter": parameter,
+                        "parameter_label": parameter_label,
+                        "spearman_rho": coefficient,
+                        "model_count": count,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def plot_phase_parameter_correlation_heatmaps(
+    correlations,
+    output,
+    fields,
+    *,
+    title,
+    dpi=180,
+):
+    """Plot phase-by-parameter Spearman matrices for related quantities."""
+    ncols = 2
+    nrows = int(np.ceil(len(fields) / ncols))
+    figure, axes = plt.subplots(
+        nrows, ncols, figsize=(11.8, 3.6 * nrows), squeeze=False
+    )
+    parameter_names = [name for name, _ in PHASE_PARAMETER_SPECS]
+    parameter_labels = [label for _, label in PHASE_PARAMETER_SPECS]
+    for axis, field in zip(axes.flat, fields):
+        selected = correlations[correlations["quantity"] == field]
+        matrix = np.full((len(PHASES), len(parameter_names)), np.nan)
+        for row, phase in enumerate(PHASES):
+            for column, parameter in enumerate(parameter_names):
+                match = selected[
+                    (selected["phase"] == phase.key)
+                    & (selected["parameter"] == parameter)
+                ]
+                if len(match) == 1:
+                    matrix[row, column] = match["spearman_rho"].iloc[0]
+        image = axis.imshow(
+            matrix, cmap="coolwarm", vmin=-1.0, vmax=1.0, aspect="auto"
+        )
+        axis.set_xticks(np.arange(len(parameter_labels)), parameter_labels)
+        axis.set_yticks(
+            np.arange(len(PHASES)), [phase.label for phase in PHASES]
+        )
+        axis.set_title(PHASE_SUMMARY_LABELS[field])
+        for row, column in np.ndindex(matrix.shape):
+            value = matrix[row, column]
+            if np.isfinite(value):
+                axis.text(
+                    column,
+                    row,
+                    f"{value:+.2f}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white" if abs(value) > 0.55 else "black",
+                )
+    for axis in axes.flat[len(fields) :]:
+        axis.set_visible(False)
+    colorbar = figure.colorbar(image, ax=axes, shrink=0.78)
+    colorbar.set_label(r"Spearman $\rho_s$ across models")
+    figure.suptitle(title, fontsize=14)
+    figure.subplots_adjust(
+        left=0.09, right=0.91, bottom=0.08, top=0.91, hspace=0.34, wspace=0.26
+    )
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
 
 
 def plot_phase_fraction_evolution(
@@ -644,6 +976,29 @@ def render_suite_phase_evolution(
         norm,
         bounds=sfr_bounds,
     )
+    plot_phase_model_summaries(
+        summary,
+        ranked,
+        output_dir,
+        bounds=summary_bounds,
+        sfr_bounds=sfr_bounds,
+        dpi=dpi,
+    )
+    correlations = phase_parameter_correlations(summary)
+    correlation_path = output_dir / "phase_parameter_correlations.csv"
+    _atomic_csv(correlations, correlation_path)
+    print(f"Wrote {correlation_path}", flush=True)
+    for slug, fields, title in PHASE_CORRELATION_FAMILIES:
+        plot_phase_parameter_correlation_heatmaps(
+            correlations,
+            output_dir / f"phase_{slug}_parameter_correlations.png",
+            fields,
+            title=(
+                f"{title}: {summary_bounds[0]:g}--"
+                f"{summary_bounds[1]:g} Myr medians"
+            ),
+            dpi=dpi,
+        )
     plot_phase_fraction_evolution(
         data,
         ranked,

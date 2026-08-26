@@ -258,6 +258,12 @@ def summarize_density_pdfs(data, ranked, *, bounds=DEFAULT_SFR_RANGE):
                 "mean_sfr10": float(data["mean_sfr10"][index]),
                 "omega": omega,
                 "kappa": np.sqrt(2.0 * (2.0 - qshear)) * omega,
+                "stellar_surface_density": float(
+                    model_parameters["stellar_surface_density"]
+                ),
+                "stellar_scale_height": float(
+                    model_parameters["stellar_scale_height"]
+                ),
                 "stellar_midplane_density": float(
                     model_parameters["stellar_midplane_density"]
                 ),

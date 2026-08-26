@@ -1125,6 +1125,12 @@ def spectrum_diagnostic_summary(
                 "mean_sfr10": float(data["mean_sfr10"][index]),
                 "omega": omega,
                 "kappa": kappa,
+                "stellar_surface_density": float(
+                    parameters["stellar_surface_density"]
+                ),
+                "stellar_scale_height": float(
+                    parameters["stellar_scale_height"]
+                ),
                 "stellar_midplane_density": float(
                     parameters["stellar_midplane_density"]
                 ),
@@ -1179,6 +1185,8 @@ def attach_spectrum_diagnostics(data, summary, time_diagnostics):
         "pixel_size_pc",
         "omega",
         "kappa",
+        "stellar_surface_density",
+        "stellar_scale_height",
         "stellar_midplane_density",
         "qshear",
         "integral_scale_time_mean_pc",

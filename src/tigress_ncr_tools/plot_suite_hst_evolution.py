@@ -364,6 +364,8 @@ def model_history_parameters(model):
         raise ValueError(f"non-positive stellar scale height for {model}")
     return {
         "omega": float(omega),
+        "stellar_surface_density": float(stellar_surface_density),
+        "stellar_scale_height": float(stellar_scale_height),
         "stellar_midplane_density": float(
             stellar_surface_density / (2.0 * stellar_scale_height)
         ),

@@ -97,6 +97,14 @@ the small neutral fractions are numerically wrong--they may be physical
 residual fractions--but it does show that the low-column PDF component is a
 censoring/floor-sensitive tracer feature.
 
+The effect on the two direct widths is asymmetric at this snapshot.
+\(\sigma_\delta\) changes only from 1.5035 to 1.5048, whereas the positive-
+column \(\sigma_s\) changes from 3.67 to 2.45 (and is 2.28 when evaluated on
+the unmasked values along only retained sightlines). The production PDFs and
+widths remain unmasked so that all tracers retain a common deterministic
+definition. Consequently, interpret H I \(\sigma_s\) as low-column sensitive;
+the H I \(\sigma_\delta\) result is essentially unaffected by this bump.
+
 For H I, report the zero/censored area fraction separately and compare the
 conditional PDF of detected positive columns. Robust scalar alternatives to
 \(\sigma_s\) include log-column interpercentile widths above a stated column
@@ -133,7 +141,41 @@ parameter correlations. Add `--movie` only when the full time evolution movie
 is needed. See [density_power_spectrum.md](density_power_spectrum.md) for the
 normalization and exact diagnostic definitions.
 
-## 4. Interpretation
+## 4. Cross-tracer correlations
+
+After the three PDF and spectrum summaries exist, run
+
+```bash
+plot-suite-tracer-correlations \
+  /tigress/changgoo/anvil/TIGRESS-NCR-suite
+```
+
+The command aligns models and averaging intervals by name, displays both
+horizontal and vertical 16th--84th percentile temporal ranges, and annotates
+the model-by-model Spearman coefficient. It writes
+`SUITE/tracer_correlations_theta0/tracer_pdf_width_correlations.png`,
+`tracer_power_spectrum_correlations.png`, and
+`tracer_correlation_coefficients.csv`.
+
+For the 31 clean models, gas and H I are closely coupled:
+
+| diagnostic | gas--H I \(\rho_s\) |
+|---|---:|
+| \(\sigma_\delta\) | 0.975 |
+| \(\sigma_s\) | 0.969 |
+| \(L_{\rm in}\) | 0.914 |
+| \(\alpha\) | 0.752 |
+| \(A_2\) | 0.992 |
+
+EM is much less correlated with either gas or H I. Gas--EM coefficients are
+0.22 and 0.17 for the two PDF widths and \(-0.07\), 0.18, and 0.28 for
+\(L_{\rm in}\), \(\alpha\), and \(A_2\), respectively. The largest EM pairing
+is H I--EM \(\alpha\), with \(\rho_s=0.48\). This is consistent with EM
+emphasizing compact ionized structures rather than the predominantly neutral
+column morphology. The H I \(\sigma_s\) comparison retains the low-column
+sensitivity documented above.
+
+## 5. Interpretation
 
 The three spectra measure morphology of *fractional* fluctuations, not the
 absolute tracer luminosity or column. H I suppresses ionized and molecular

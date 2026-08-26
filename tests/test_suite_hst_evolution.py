@@ -133,6 +133,8 @@ def test_history_parameter_colors_are_distinct(monkeypatch):
     )
     assert model_history_parameters(Path("model")) == {
         "omega": 0.03,
+        "stellar_surface_density": 40.0,
+        "stellar_scale_height": 200.0,
         "stellar_midplane_density": 0.1,
         "qshear": 0.8,
     }

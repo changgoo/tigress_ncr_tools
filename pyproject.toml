@@ -24,6 +24,7 @@ plot-suite-density-spectrum = "tigress_ncr_tools.plot_suite_density_spectrum:mai
 plot-box-size-density-spectrum = "tigress_ncr_tools.plot_box_size_density_spectrum:main"
 plot-suite-density-pdf = "tigress_ncr_tools.plot_suite_density_pdf:main"
 plot-hi-fraction-mask = "tigress_ncr_tools.plot_hi_fraction_mask:main"
+plot-suite-tracer-correlations = "tigress_ncr_tools.plot_suite_tracer_correlations:main"
 plot-suite-prfm = "tigress_ncr_tools.plot_suite_prfm:main"
 plot-suite-phases = "tigress_ncr_tools.plot_suite_phase_evolution:main"
 plot-suite-projections = "tigress_ncr_tools.plot_suite_projections:main"

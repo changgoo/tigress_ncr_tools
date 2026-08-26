@@ -3,8 +3,11 @@ import pytest
 
 from tigress_ncr_tools.plot_suite_phase_evolution import (
     PHASES,
+    PHASE_PARAMETER_SPECS,
+    PLOTTED_PHASE_SUMMARY_FIELDS,
     PROFILE_FIELDS,
     phase_profile_moments,
+    phase_parameter_correlations,
     reduce_phase_zprof_snapshot,
     slab_overlap_weights,
 )
@@ -120,3 +123,31 @@ def test_reduce_phase_snapshot_uses_six_phase_mapping_and_preserves_uim_residual
     assert closure["selected_mass_fraction_box"] == pytest.approx(0.95)
     assert closure["uim_residual_mass_fraction_box"] == pytest.approx(0.05)
     assert closure["uim_residual_volume_fraction_hgas"] == pytest.approx(0.05)
+
+
+def test_phase_parameter_correlations_use_model_medians():
+    rows = []
+    for phase_index, phase in enumerate(PHASES, start=1):
+        for model_index in range(1, 5):
+            row = {
+                "model": f"model{model_index}",
+                "phase": phase.key,
+                "phase_label": phase.label,
+            }
+            for parameter, _ in PHASE_PARAMETER_SPECS:
+                row[parameter] = float(model_index)
+            for field in PLOTTED_PHASE_SUMMARY_FIELDS:
+                row[f"{field}_time_median"] = float(
+                    phase_index * model_index
+                )
+            rows.append(row)
+    correlations = phase_parameter_correlations(
+        __import__("pandas").DataFrame(rows)
+    )
+    assert len(correlations) == (
+        len(PHASES)
+        * len(PLOTTED_PHASE_SUMMARY_FIELDS)
+        * len(PHASE_PARAMETER_SPECS)
+    )
+    np.testing.assert_allclose(correlations["spearman_rho"], 1.0)
+    assert np.all(correlations["model_count"] == 4)

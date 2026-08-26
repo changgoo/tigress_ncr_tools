@@ -138,11 +138,30 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 - `phase_closure_time_series.csv`: selected-six sums and UIM residuals;
 - `phase_model_summary.csv`: mean, standard deviation, median, 16th/84th
   percentiles, and counts over the summary interval;
+- `phase_parameter_correlations.csv`: model-by-model Spearman coefficients
+  for the standard displayed summaries against the four direct inputs
+  \(\Sigma_*,H_*,\Omega,q\) and the derived \(\kappa,\rho_*\);
 - `model_sfr_colors.csv`: the exact model ranking and color mapping;
+- `phase_fraction_model_summary.png`: temporal medians and 16th--84th
+  percentile ranges for mass/volume fractions in the box and inner slab;
+- `phase_structure_speed_model_summary.png`: the corresponding phase scale
+  heights, 3D velocity dispersions, and mean/perturbed Alfvén speeds;
+- `phase_fractions_parameter_correlations.png`,
+  `phase_scale_heights_parameter_correlations.png`, and
+  `phase_dynamics_parameter_correlations.png`: annotated phase-by-parameter
+  Spearman heatmaps;
 - whole-box and within-\(H_{\rm gas}\) fraction-evolution figures;
 - phase mass/volume scale-height evolution;
 - whole-box and inner-slab 3D velocity-dispersion evolution;
 - whole-box and inner-slab mean/perturbed Alfvén-speed evolution.
+
+The ensemble-summary points are the 400--600 Myr temporal medians for each
+model and phase; their bars are the corresponding temporal 16th--84th
+percentiles. Black connecting symbols show the median across models only as a
+visual guide. The heatmaps correlate the same per-model temporal medians and
+do not treat the correlated direct/derived predictors as independent causal
+experiments. In particular, \(\Sigma_*\)--\(\rho_*\) and
+\(\Omega\)--\(\kappa\) trends should be interpreted together.
 
 The long-form CSV is the primary analysis product. It preserves the three
 velocity components and both magnetic components even when the standard
