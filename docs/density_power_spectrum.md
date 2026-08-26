@@ -6,6 +6,10 @@ the face-on (`theta0`) projected total-gas column-density field `nH` from each
 simulation. `R8_8pc_NCR_row0000` is excluded because its projection sequence
 is corrupted; the clean-suite products therefore contain 31 models.
 
+The same shear-aware estimator can be applied to atomic-hydrogen column and
+emission measure with `--quantity hi` or `--quantity em`; see
+[projected_species_analysis.md](projected_species_analysis.md).
+
 The segmented 1024/2048/4096-pc box-size application uses the same estimator
 with a physical-wavenumber comparison grid and is documented separately in
 [box_size_density_power_spectrum.md](box_size_density_power_spectrum.md).

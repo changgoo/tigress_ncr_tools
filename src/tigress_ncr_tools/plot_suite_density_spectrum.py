@@ -28,6 +28,11 @@ from .plot_suite_hst_evolution import (
     sfr_colormap,
     write_model_colors,
 )
+from .projected_quantities import (
+    PROJECTED_QUANTITIES,
+    archive_projected_quantity,
+    projected_quantity,
+)
 from .surface_density_stats import (
     annular_average_power_2d,
     annular_power_statistics_2d,
@@ -72,6 +77,7 @@ def overdensity_power_2d(
     qshear,
     omega,
     *,
+    field="nH",
     window="none",
     tukey_alpha=0.25,
     pad_factor=1.0,
@@ -84,7 +90,7 @@ def overdensity_power_2d(
     """
     if not np.isclose(frame["theta"], 0.0):
         raise ValueError("density power spectra currently require theta0")
-    sigma = np.asarray(frame["fields"]["nH"], dtype=float)
+    sigma = np.asarray(frame["fields"][field], dtype=float)
     if sigma.ndim != 2 or not np.all(np.isfinite(sigma)):
         raise ValueError("surface density must be a finite 2D array")
 
@@ -126,6 +132,7 @@ def overdensity_power(
     qshear,
     omega,
     *,
+    field="nH",
     k_edges=None,
     k_bins=DEFAULT_K_BINS,
     window="none",
@@ -137,14 +144,13 @@ def overdensity_power(
         frame,
         qshear,
         omega,
+        field=field,
         window=window,
         tukey_alpha=tukey_alpha,
         pad_factor=pad_factor,
     )
     if k_edges is None:
-        k_edges = default_k_edges(
-            frame["x_centers"], frame["y_centers"], bins=k_bins
-        )
+        k_edges = default_k_edges(frame["x_centers"], frame["y_centers"], bins=k_bins)
     power, count = annular_average_power_2d(
         result["power_2d"], result["kx0"], result["ky"], result["shear"], k_edges
     )
@@ -166,39 +172,51 @@ def _atomic_savez(path, **data):
     temporary.replace(path)
 
 
-def model_power2d_archive(model, proj_id="theta0"):
-    """Return the per-model archive path for the 2D spectrum time series."""
-    return Path(model) / "proj2d" / proj_id / POWER2D_DIRECTORY / POWER2D_ARCHIVE_NAME
+def model_power2d_archive(model, proj_id="theta0", quantity="gas"):
+    """Return the per-model archive path for one quantity's 2D PSD series."""
+    quantity_spec = projected_quantity(quantity)
+    directory = f"{quantity_spec.slug}_power_2d"
+    return Path(model) / "proj2d" / proj_id / directory / POWER2D_ARCHIVE_NAME
 
 
-def _power2d_archive_matches(data, targets, window, tukey_alpha, pad_factor):
+def _power2d_archive_matches(
+    data, targets, window, tukey_alpha, pad_factor, field="nH"
+):
     """Return whether a cached 2D series matches the requested configuration."""
     return (
         np.array_equal(np.asarray(data.get("target_time")), np.asarray(targets))
+        and str(np.asarray(data.get("field", "nH")).item()) == str(field)
         and str(np.asarray(data.get("window", "")).item()) == str(window)
         and np.isclose(float(np.asarray(data.get("tukey_alpha", np.nan))), tukey_alpha)
         and np.isclose(float(np.asarray(data.get("pad_factor", np.nan))), pad_factor)
     )
 
 
-def _power2d_file_matches(path, targets, window, tukey_alpha, pad_factor):
+def _power2d_file_matches(path, targets, window, tukey_alpha, pad_factor, field="nH"):
     """Check 2D-cache metadata without loading the large power array."""
     try:
         with np.load(path) as saved:
             metadata = {
                 key: saved[key]
-                for key in ("target_time", "window", "tukey_alpha", "pad_factor")
+                for key in (
+                    "target_time",
+                    "field",
+                    "window",
+                    "tukey_alpha",
+                    "pad_factor",
+                )
             }
     except (OSError, KeyError, ValueError):
         return False
     return _power2d_archive_matches(
-        metadata, targets, window, tukey_alpha, pad_factor
+        metadata, targets, window, tukey_alpha, pad_factor, field=field
     )
 
 
 def generate_model_power2d(
     model,
     *,
+    quantity="gas",
     proj_id,
     targets,
     window,
@@ -207,6 +225,7 @@ def generate_model_power2d(
     output,
 ):
     """Read projection maps and write one model's complete 2D PSD series."""
+    quantity_spec = projected_quantity(quantity)
     parameter_path, qshear, omega = read_shear_parameters(model)
     index = projection_number_index(model, proj_id)
     guess_offset = 0
@@ -217,11 +236,12 @@ def generate_model_power2d(
         path, stored_time, guess_offset = nearest_indexed_projection(
             index, float(target), guess_offset, tolerance=0.05
         )
-        frame = read_proj2d(path, fields="nH")
+        frame = read_proj2d(path, fields=quantity_spec.field)
         result = overdensity_power_2d(
             frame,
             qshear,
             omega,
+            field=quantity_spec.field,
             window=window,
             tukey_alpha=tukey_alpha,
             pad_factor=pad_factor,
@@ -254,9 +274,13 @@ def generate_model_power2d(
     data = {
         "model": np.asarray(model.name),
         "projection_id": np.asarray(proj_id),
-        "field": np.asarray("nH"),
-        "delta_definition": np.asarray("Sigma/<Sigma>-1"),
-        "coordinate_remap": np.asarray("g(x,y)=Sigma(x,y-shear*x)"),
+        "quantity": np.asarray(quantity_spec.key),
+        "field": np.asarray(quantity_spec.field),
+        "quantity_label": np.asarray(quantity_spec.label),
+        "quantity_symbol": np.asarray(quantity_spec.symbol),
+        "projected_physical_unit": np.asarray(quantity_spec.physical_unit),
+        "delta_definition": np.asarray("map/<map>-1"),
+        "coordinate_remap": np.asarray("g(x,y)=map(x,y-shear*x)"),
         "wavenumber_mapping": np.asarray("kx=kx0+shear*ky"),
         "power_normalization": np.asarray(
             "|dx dy FFT(delta)|^2 / (dx dy sum(window^2))"
@@ -292,6 +316,7 @@ def generate_model_power2d(
 def load_or_generate_model_power2d(
     model,
     *,
+    quantity="gas",
     proj_id,
     targets,
     window,
@@ -300,14 +325,23 @@ def load_or_generate_model_power2d(
     overwrite=False,
 ):
     """Load a compatible per-model 2D PSD series or generate it from maps."""
-    output = model_power2d_archive(model, proj_id)
+    quantity_spec = projected_quantity(quantity)
+    output = model_power2d_archive(model, proj_id, quantity_spec.key)
     if output.exists() and not overwrite:
-        if _power2d_file_matches(output, targets, window, tukey_alpha, pad_factor):
+        if _power2d_file_matches(
+            output,
+            targets,
+            window,
+            tukey_alpha,
+            pad_factor,
+            field=quantity_spec.field,
+        ):
             print(f"Loading existing {output}", flush=True)
             return load_spectrum_archive(output)
         print(f"Regenerating incompatible {output}", flush=True)
     return generate_model_power2d(
         model,
+        quantity=quantity_spec.key,
         proj_id=proj_id,
         targets=targets,
         window=window,
@@ -319,17 +353,35 @@ def load_or_generate_model_power2d(
 
 def _ensure_model_power2d(task):
     """Worker entry point that creates a cache if it is absent or stale."""
-    model, proj_id, targets, window, tukey_alpha, pad_factor, overwrite = task
-    output = model_power2d_archive(model, proj_id)
+    (
+        model,
+        quantity,
+        proj_id,
+        targets,
+        window,
+        tukey_alpha,
+        pad_factor,
+        overwrite,
+    ) = task
+    quantity_spec = projected_quantity(quantity)
+    output = model_power2d_archive(model, proj_id, quantity_spec.key)
     if (
         output.exists()
         and not overwrite
-        and _power2d_file_matches(output, targets, window, tukey_alpha, pad_factor)
+        and _power2d_file_matches(
+            output,
+            targets,
+            window,
+            tukey_alpha,
+            pad_factor,
+            field=quantity_spec.field,
+        )
     ):
         print(f"Keeping compatible {output}", flush=True)
         return str(output)
     generate_model_power2d(
         model,
+        quantity=quantity_spec.key,
         proj_id=proj_id,
         targets=targets,
         window=window,
@@ -343,6 +395,7 @@ def _ensure_model_power2d(task):
 def analyze_suite_power(
     ranked,
     *,
+    quantity="gas",
     proj_id="theta0",
     start=DEFAULT_TIME_RANGE[0],
     stop=DEFAULT_TIME_RANGE[1],
@@ -356,6 +409,7 @@ def analyze_suite_power(
     output=None,
 ):
     """Generate/load 2D PSD series, then annularly reduce every model."""
+    quantity_spec = projected_quantity(quantity)
     if proj_id != "theta0":
         raise ValueError("shear-aware density spectra currently require theta0")
     targets = np.arange(int(start), int(stop) + 1, int(stride), dtype=int)
@@ -365,6 +419,7 @@ def analyze_suite_power(
     generation_tasks = [
         (
             model,
+            quantity_spec.key,
             proj_id,
             targets,
             window,
@@ -378,7 +433,9 @@ def analyze_suite_power(
         generated_paths = [_ensure_model_power2d(task) for task in generation_tasks]
     else:
         with ProcessPoolExecutor(max_workers=int(workers)) as executor:
-            generated_paths = list(executor.map(_ensure_model_power2d, generation_tasks))
+            generated_paths = list(
+                executor.map(_ensure_model_power2d, generation_tasks)
+            )
 
     model_names = []
     mean_sfr = []
@@ -458,8 +515,12 @@ def analyze_suite_power(
         all_omega.append(float(two_dimensional["omega_kms_per_pc"]))
         all_pixel_size.append(float(np.max(pixel_size_xy)))
         all_box_size.append(float(np.min(box_size_xy)))
-        parameter_sources.append(str(np.asarray(two_dimensional["parameter_source"]).item()))
-        power2d_archives.append(str(model_power2d_archive(model, proj_id)))
+        parameter_sources.append(
+            str(np.asarray(two_dimensional["parameter_source"]).item())
+        )
+        power2d_archives.append(
+            str(model_power2d_archive(model, proj_id, quantity_spec.key))
+        )
 
     time = np.asarray(all_time)
     if np.any(np.ptp(time, axis=0) > 0.05):
@@ -476,9 +537,13 @@ def analyze_suite_power(
         "mean_sfr10": np.asarray(mean_sfr),
         "sfr_time_bounds": np.asarray(DEFAULT_SFR_RANGE),
         "projection_id": np.asarray(proj_id),
-        "field": np.asarray("nH"),
-        "delta_definition": np.asarray("Sigma/<Sigma>-1"),
-        "coordinate_remap": np.asarray("g(x,y)=Sigma(x,y-shear*x)"),
+        "quantity": np.asarray(quantity_spec.key),
+        "field": np.asarray(quantity_spec.field),
+        "quantity_label": np.asarray(quantity_spec.label),
+        "quantity_symbol": np.asarray(quantity_spec.symbol),
+        "projected_physical_unit": np.asarray(quantity_spec.physical_unit),
+        "delta_definition": np.asarray("map/<map>-1"),
+        "coordinate_remap": np.asarray("g(x,y)=map(x,y-shear*x)"),
         "wavenumber_mapping": np.asarray("kx=kx0+shear*ky"),
         "power_normalization": np.asarray(
             "|dx dy FFT(delta)|^2 / (dx dy sum(window^2))"
@@ -571,13 +636,13 @@ def _uniform_center_edges(centers):
     """Return bin edges for uniformly spaced cell centers."""
     centers = np.asarray(centers, dtype=float)
     if centers.ndim != 1 or centers.size < 2:
-        raise ValueError("centers must be a one-dimensional array with at least 2 cells")
+        raise ValueError(
+            "centers must be a one-dimensional array with at least 2 cells"
+        )
     spacing = float(np.median(np.diff(centers)))
     if spacing <= 0.0 or not np.allclose(np.diff(centers), spacing):
         raise ValueError("centers must be uniformly increasing")
-    return np.concatenate(
-        ([centers[0] - 0.5 * spacing], centers + 0.5 * spacing)
-    )
+    return np.concatenate(([centers[0] - 0.5 * spacing], centers + 0.5 * spacing))
 
 
 def physical_time_mean_power_2d(
@@ -622,9 +687,7 @@ def physical_time_mean_power_2d(
         indices = selected_indices[start : start + int(chunk_size)]
         selected = power_2d[indices][:, y_order][:, :, x_order]
         x_physical = x_mode[None, None, :] + (
-            shear[indices, None, None]
-            * y_mode[None, :, None]
-            * (lx / ly)
+            shear[indices, None, None] * y_mode[None, :, None] * (lx / ly)
         )
         x_physical = np.broadcast_to(x_physical, selected.shape)
         y_physical = np.broadcast_to(y_mode[None, :, None], selected.shape)
@@ -690,6 +753,7 @@ def calculate_suite_time_mean_power_2d(
     output=None,
 ):
     """Build physical-grid time-mean 2D spectra from every model cache."""
+    quantity_spec = archive_projected_quantity(data)
     model_names = np.asarray(data["model"]).astype(str)
     archives = np.asarray(data["power2d_archive"]).astype(str)
     if archives.shape != model_names.shape:
@@ -729,6 +793,11 @@ def calculate_suite_time_mean_power_2d(
     result = {
         "model": model_names,
         "mean_sfr10": np.asarray(data["mean_sfr10"], dtype=float),
+        "quantity": np.asarray(quantity_spec.key),
+        "field": np.asarray(quantity_spec.field),
+        "quantity_label": np.asarray(quantity_spec.label),
+        "quantity_symbol": np.asarray(quantity_spec.symbol),
+        "projected_physical_unit": np.asarray(quantity_spec.physical_unit),
         "time_bounds": np.asarray(bounds, dtype=float),
         "time_sample_count": np.asarray(time_counts, dtype=int),
         "mean_power_2d": np.asarray(means),
@@ -738,11 +807,11 @@ def calculate_suite_time_mean_power_2d(
         "box_size_xy_pc": np.asarray(box_sizes),
         "power2d_archive": archives,
         "power_unit": np.asarray("pc^2"),
-        "coordinate_definition": np.asarray(
-            "kx_mode=kx*Lx/(2pi), ky_mode=ky*Ly/(2pi)"
-        ),
+        "coordinate_definition": np.asarray("kx_mode=kx*Lx/(2pi), ky_mode=ky*Ly/(2pi)"),
         "physical_k_mapping": np.asarray("kx=kx0+shear*ky"),
-        "deposition": np.asarray("arithmetic mean after Cartesian nearest-bin deposition"),
+        "deposition": np.asarray(
+            "arithmetic mean after Cartesian nearest-bin deposition"
+        ),
         "excluded_models": np.asarray(sorted(EXCLUDED_MODELS)),
     }
     if output is not None:
@@ -761,6 +830,7 @@ def plot_suite_time_mean_power_2d(
     dpi=180,
 ):
     """Plot the SFR-ranked 4-by-8 suite of physical time-mean 2D spectra."""
+    quantity_spec = archive_projected_quantity(data)
     if list(np.asarray(data["model"]).astype(str)) != [
         model.name for model, _ in ranked
     ]:
@@ -819,7 +889,7 @@ def plot_suite_time_mean_power_2d(
     fig.supxlabel(r"physical $k_xL_x/(2\pi)$")
     fig.supylabel(r"physical $k_yL_y/(2\pi)$")
     fig.suptitle(
-        "Shear-aware gas-column 2D power spectra: "
+        f"Shear-aware {quantity_spec.label} 2D power spectra: "
         f"{bounds[0]:g}--{bounds[1]:g} Myr arithmetic means",
         fontsize=13,
     )
@@ -866,9 +936,7 @@ def spectral_slope_alpha(k, power, wavelength_bounds=DEFAULT_SPECTRAL_BAND_PC):
     power = np.asarray(power, dtype=float)
     lower, upper = (float(value) for value in wavelength_bounds)
     if not np.isfinite(lower + upper) or not 0.0 < lower < upper:
-        raise ValueError(
-            "wavelength bounds must be finite, positive, and increasing"
-        )
+        raise ValueError("wavelength bounds must be finite, positive, and increasing")
     wavelength = 2.0 * np.pi / k
     valid = (
         np.isfinite(k)
@@ -1015,9 +1083,7 @@ def spectrum_diagnostic_summary(
             scale_percentile16,
             scale_percentile84,
             scale_count,
-        ) = _finite_statistics(
-            time_diagnostics["integral_scale_time_pc"][index, use]
-        )
+        ) = _finite_statistics(time_diagnostics["integral_scale_time_pc"][index, use])
         (
             alpha_mean,
             alpha_std,
@@ -1079,20 +1145,14 @@ def spectrum_diagnostic_summary(
                 "anisotropy_band_amplitude_time_mean": amplitude_mean,
                 "anisotropy_band_amplitude_time_std": amplitude_std,
                 "anisotropy_band_amplitude_time_median": amplitude_median,
-                "anisotropy_band_amplitude_time_percentile16": (
-                    amplitude_percentile16
-                ),
-                "anisotropy_band_amplitude_time_percentile84": (
-                    amplitude_percentile84
-                ),
+                "anisotropy_band_amplitude_time_percentile16": (amplitude_percentile16),
+                "anisotropy_band_amplitude_time_percentile84": (amplitude_percentile84),
                 "anisotropy_band_amplitude_time_count": amplitude_count,
                 "anisotropy_band_angle_circular_mean_deg": (
                     angle_circular_mean * angle_factor
                 ),
                 "anisotropy_band_angle_resultant_length": angle_resultant_length,
-                "anisotropy_band_angle_time_median_deg": (
-                    angle_median * angle_factor
-                ),
+                "anisotropy_band_angle_time_median_deg": (angle_median * angle_factor),
                 "anisotropy_band_angle_time_percentile16_deg": (
                     angle_percentile16 * angle_factor
                 ),
@@ -1270,7 +1330,9 @@ def plot_spectrum_diagnostic_relations(
     print(f"Wrote {output}", flush=True)
 
 
-def _plot_percentile_points(axis, x, median, percentile16, percentile84, color, cmap, norm):
+def _plot_percentile_points(
+    axis, x, median, percentile16, percentile84, color, cmap, norm
+):
     """Plot colored medians with asymmetric 16th--84th percentile bars."""
     for x_value, center, low, high, color_value in zip(
         x, median, percentile16, percentile84, color
@@ -1343,9 +1405,7 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
     fig, axes = plt.subplots(4, 3, figsize=(14.2, 14.2), sharex="col")
     for column, (x_field, xlabel) in enumerate(x_specifications):
         x = summary[x_field].to_numpy(dtype=float)
-        for row, (field, low_field, high_field, ylabel) in enumerate(
-            y_specifications
-        ):
+        for row, (field, low_field, high_field, ylabel) in enumerate(y_specifications):
             axis = axes[row, column]
             median = summary[field].to_numpy(dtype=float)
             percentile16 = summary[low_field].to_numpy(dtype=float)
@@ -1484,15 +1544,15 @@ def create_spectrum_figure(
 
 def plot_time_mean_spectrum(data, ranked, output, *, cmap_name=DEFAULT_CMAP, dpi=180):
     """Plot mean power and median anisotropy over t=200--600."""
+    quantity_spec = archive_projected_quantity(data)
     k = np.asarray(data["k_centers"])
     power = time_mean_power(data, DEFAULT_SFR_RANGE)
     time = np.asarray(data["time"], dtype=float)
     anisotropy_time = np.asarray(data["anisotropy_amplitude"], dtype=float)
     anisotropy = np.full((power.shape[0], power.shape[1]), np.nan)
     for index in range(power.shape[0]):
-        use = (
-            (time[index] >= DEFAULT_SFR_RANGE[0])
-            & (time[index] <= DEFAULT_SFR_RANGE[1])
+        use = (time[index] >= DEFAULT_SFR_RANGE[0]) & (
+            time[index] <= DEFAULT_SFR_RANGE[1]
         )
         anisotropy[index] = np.nanmedian(anisotropy_time[index, use], axis=0)
     mean_sfr = np.asarray(data["mean_sfr10"])
@@ -1504,7 +1564,7 @@ def plot_time_mean_spectrum(data, ranked, output, *, cmap_name=DEFAULT_CMAP, dpi
         anisotropy,
         ranked,
         title=(
-            r"Shear-aware gas-column overdensity spectrum: "
+            f"Shear-aware {quantity_spec.label} overdensity spectrum: "
             r"mean $P_\delta$ and median $A_2$ over $200\leq t\leq600$"
         ),
         cmap=cmap,
@@ -1531,6 +1591,8 @@ def render_spectrum_movie(
 ):
     """Render and encode the full ``P_delta(k,t)`` evolution."""
     output_dir = Path(output_dir)
+    quantity_spec = archive_projected_quantity(data)
+    frame_prefix = f"{quantity_spec.slug}_power_spectrum"
     k = np.asarray(data["k_centers"])
     power = np.asarray(data["power_delta"])
     anisotropy = np.asarray(data["anisotropy_amplitude"])
@@ -1541,7 +1603,7 @@ def render_spectrum_movie(
     fig = axes = lines = title_text = None
     try:
         for time_index, target in enumerate(np.asarray(data["target_time"], dtype=int)):
-            output = output_dir / f"density_power_spectrum.{target:04d}.png"
+            output = output_dir / f"{frame_prefix}.{target:04d}.png"
             if output.exists() and not overwrite:
                 print(f"Skipping existing {output}", flush=True)
                 continue
@@ -1552,7 +1614,10 @@ def render_spectrum_movie(
                     current,
                     anisotropy[:, time_index, :],
                     ranked,
-                    title=rf"Shear-aware gas-column overdensity spectrum: $t={target:g}$",
+                    title=(
+                        f"Shear-aware {quantity_spec.label} overdensity spectrum: "
+                        rf"$t={target:g}$"
+                    ),
                     cmap=cmap,
                     norm=norm,
                     power_limits=power_limits,
@@ -1570,21 +1635,23 @@ def render_spectrum_movie(
                         mode[anisotropy_valid], anisotropy_values[anisotropy_valid]
                     )
                 title_text.set_text(
-                    rf"Shear-aware gas-column overdensity spectrum: $t={target:g}$"
+                    f"Shear-aware {quantity_spec.label} overdensity spectrum: "
+                    rf"$t={target:g}$"
                 )
             fig.savefig(output, dpi=dpi, facecolor="white")
             print(f"Wrote {output}", flush=True)
     finally:
         if fig is not None:
             plt.close(fig)
-    movie_path = output_dir / "density_power_spectrum_evolution.mp4"
-    make_grid_movie(output_dir, "density_power_spectrum", movie_path, fps)
+    movie_path = output_dir / f"{frame_prefix}_evolution.mp4"
+    make_grid_movie(output_dir, frame_prefix, movie_path, fps)
     return movie_path
 
 
 def render_suite_density_spectrum(
     suite,
     *,
+    quantity="gas",
     model_glob=DEFAULT_MODEL_GLOB,
     proj_id="theta0",
     output_dir=None,
@@ -1605,9 +1672,14 @@ def render_suite_density_spectrum(
     movie=False,
     fps=30.0,
 ):
-    """Analyze, cache, and plot suite gas-column overdensity spectra."""
+    """Analyze, cache, and plot suite projected-quantity spectra."""
     suite = Path(suite).expanduser()
-    output_dir = Path(output_dir) if output_dir else suite / DEFAULT_OUTPUT_NAME
+    quantity_spec = projected_quantity(quantity)
+    output_dir = (
+        Path(output_dir)
+        if output_dir
+        else suite / f"{quantity_spec.slug}_power_spectrum_theta0"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     models = [
         model
@@ -1615,11 +1687,11 @@ def render_suite_density_spectrum(
         if model.name not in EXCLUDED_MODELS
     ]
     ranked = rank_models_by_sfr(models, bounds=sfr_bounds, max_rows=10000)
-    archive = output_dir / DEFAULT_ARCHIVE_NAME
+    archive = output_dir / f"{quantity_spec.slug}_power_spectra.npz"
     missing_power2d = [
-        model_power2d_archive(model, proj_id)
+        model_power2d_archive(model, proj_id, quantity_spec.key)
         for model, _ in ranked
-        if not model_power2d_archive(model, proj_id).exists()
+        if not model_power2d_archive(model, proj_id, quantity_spec.key).exists()
     ]
     rebuild_reduction = overwrite or overwrite_2d or bool(missing_power2d)
     if archive.exists() and not rebuild_reduction:
@@ -1655,9 +1727,12 @@ def render_suite_density_spectrum(
             )
         if list(data["model"]) != [model.name for model, _ in ranked]:
             raise ValueError("cached model ordering does not match current SFR ranking")
+        if str(np.asarray(data.get("field", "nH")).item()) != quantity_spec.field:
+            raise ValueError("cached spectrum field does not match requested quantity")
     else:
         data = analyze_suite_power(
             ranked,
+            quantity=quantity_spec.key,
             proj_id=proj_id,
             start=start,
             stop=stop,
@@ -1682,14 +1757,16 @@ def render_suite_density_spectrum(
     data = attach_spectrum_diagnostics(data, diagnostic_summary, time_diagnostics)
     _atomic_savez(archive, **data)
     print(f"Wrote {archive}", flush=True)
-    diagnostic_csv = output_dir / f"{DEFAULT_DIAGNOSTIC_NAME}.csv"
+    diagnostic_name = f"{quantity_spec.slug}_power_spectrum_integral_scale_slope"
+    correlation_name = f"{quantity_spec.slug}_power_spectrum_correlations"
+    diagnostic_csv = output_dir / f"{diagnostic_name}.csv"
     _atomic_csv(diagnostic_summary, diagnostic_csv)
     print(f"Wrote {diagnostic_csv}", flush=True)
-    summary = output_dir / "density_power_spectrum_time_mean.png"
+    summary = output_dir / f"{quantity_spec.slug}_power_spectrum_time_mean.png"
     cmap, norm = plot_time_mean_spectrum(
         data, ranked, summary, cmap_name=cmap_name, dpi=dpi
     )
-    mean_power2d_path = output_dir / DEFAULT_POWER2D_MEAN_ARCHIVE
+    mean_power2d_path = output_dir / f"{quantity_spec.slug}_power_2d_time_mean.npz"
     mean_power2d = None
     if mean_power2d_path.exists() and not (overwrite or overwrite_2d):
         candidate = load_spectrum_archive(mean_power2d_path)
@@ -1699,6 +1776,8 @@ def render_suite_density_spectrum(
             == [model.name for model, _ in ranked]
             and candidate_bounds.shape == (2,)
             and np.allclose(candidate_bounds, sfr_bounds)
+            and str(np.asarray(candidate.get("field", "nH")).item())
+            == quantity_spec.field
         ):
             mean_power2d = candidate
             print(f"Loading existing {mean_power2d_path}", flush=True)
@@ -1712,7 +1791,7 @@ def render_suite_density_spectrum(
     plot_suite_time_mean_power_2d(
         mean_power2d,
         ranked,
-        output_dir / DEFAULT_POWER2D_MEAN_FIGURE,
+        output_dir / f"{quantity_spec.slug}_power_2d_time_mean.png",
         mode_limit=power2d_mode_limit,
         cmap_name=cmap_name,
         dpi=dpi,
@@ -1726,7 +1805,7 @@ def render_suite_density_spectrum(
     )
     for field, scale, parameter_cmap, colorbar_label in DIAGNOSTIC_COLOR_SPECS:
         suffix = "" if field == "mean_sfr10" else f"_color_by_{field}"
-        diagnostic_output = output_dir / f"{DEFAULT_DIAGNOSTIC_NAME}{suffix}.png"
+        diagnostic_output = output_dir / f"{diagnostic_name}{suffix}.png"
         plot_spectrum_diagnostic_relations(
             diagnostic_summary,
             diagnostic_output,
@@ -1738,16 +1817,17 @@ def render_suite_density_spectrum(
         )
     plot_spectrum_correlations(
         diagnostic_summary,
-        output_dir / f"{DEFAULT_CORRELATION_NAME}.png",
+        output_dir / f"{correlation_name}.png",
         dpi=dpi,
     )
     if movie:
-        movie_manifest = output_dir / "density_power_spectrum_movie_models.txt"
+        movie_manifest = (
+            output_dir / f"{quantity_spec.slug}_power_spectrum_movie_models.txt"
+        )
         expected_manifest = (
-            "axis=kL/(2pi); top=lambda=2pi/k; second_panel=A2; version=2\n"
-            + "\n".join(
-                str(name) for name in data["model"]
-            )
+            "axis=kL/(2pi); top=lambda=2pi/k; second_panel=A2; "
+            f"field={quantity_spec.field}; version=3\n"
+            + "\n".join(str(name) for name in data["model"])
         )
         movie_stale = (
             not movie_manifest.exists()
@@ -1771,6 +1851,9 @@ def main(argv=None):
     parser.add_argument("suite", nargs="?", type=Path, default=DEFAULT_SUITE)
     parser.add_argument("--model-glob", default=DEFAULT_MODEL_GLOB)
     parser.add_argument("--projection", default="theta0")
+    parser.add_argument(
+        "--quantity", choices=tuple(PROJECTED_QUANTITIES), default="gas"
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--start", type=int, default=DEFAULT_TIME_RANGE[0])
     parser.add_argument("--stop", type=int, default=DEFAULT_TIME_RANGE[1])
@@ -1808,6 +1891,7 @@ def main(argv=None):
         parser.error("--dpi and --fps must be positive")
     render_suite_density_spectrum(
         args.suite,
+        quantity=args.quantity,
         model_glob=args.model_glob,
         proj_id=args.projection,
         output_dir=args.output_dir,

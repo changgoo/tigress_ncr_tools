@@ -38,6 +38,11 @@ from .plot_suite_hst_evolution import (
     sfr_colormap,
     whole_history_file,
 )
+from .projected_quantities import (
+    PROJECTED_QUANTITIES,
+    archive_projected_quantity,
+    projected_quantity,
+)
 from .surface_density_stats import normalized_pdf
 
 
@@ -54,11 +59,11 @@ DEFAULT_HISTORY_SAMPLES = 4000
 DEFAULT_PDF_DISPLAY_FLOOR = 1.0e-4
 
 
-def frame_density_pdf(frame, delta_edges, s_edges):
+def frame_density_pdf(frame, delta_edges, s_edges, field="nH"):
     """Return area-weighted delta/s PDFs and direct pixel standard deviations."""
     if not np.isclose(frame["theta"], 0.0):
         raise ValueError("density PDFs currently require theta0")
-    sigma = np.asarray(frame["fields"]["nH"], dtype=float)
+    sigma = np.asarray(frame["fields"][field], dtype=float)
     if sigma.ndim != 2 or not np.all(np.isfinite(sigma)) or np.any(sigma <= 0.0):
         raise ValueError("surface density must be a finite, positive 2D array")
     mean_sigma = float(np.mean(sigma))
@@ -75,7 +80,7 @@ def frame_density_pdf(frame, delta_edges, s_edges):
 
 
 def _analyze_model_pdf(task):
-    model, model_sfr, targets, proj_id, delta_edges, s_edges = task
+    model, model_sfr, targets, proj_id, field, delta_edges, s_edges = task
     index = projection_number_index(model, proj_id)
     guess_offset = 0
     times = []
@@ -88,8 +93,8 @@ def _analyze_model_pdf(task):
         path, stored_time, guess_offset = nearest_indexed_projection(
             index, float(target), guess_offset, tolerance=0.05
         )
-        frame = read_proj2d(path, fields="nH")
-        result = frame_density_pdf(frame, delta_edges, s_edges)
+        frame = read_proj2d(path, fields=field)
+        result = frame_density_pdf(frame, delta_edges, s_edges, field=field)
         times.append(stored_time)
         delta_pdfs.append(result["pdf_delta_area"])
         s_pdfs.append(result["pdf_s_area"])
@@ -113,24 +118,36 @@ def _analyze_model_pdf(task):
 def analyze_suite_pdfs(
     ranked,
     *,
+    quantity="gas",
     proj_id="theta0",
     start=DEFAULT_TIME_RANGE[0],
     stop=DEFAULT_TIME_RANGE[1],
     stride=1,
-    delta_range=DEFAULT_DELTA_RANGE,
-    s_range=DEFAULT_S_RANGE,
+    delta_range=None,
+    s_range=None,
     pdf_bins=DEFAULT_PDF_BINS,
     workers=1,
     output=None,
 ):
     """Calculate and optionally cache PDF time series for all ranked models."""
+    quantity_spec = projected_quantity(quantity)
+    delta_range = quantity_spec.delta_range if delta_range is None else delta_range
+    s_range = quantity_spec.s_range if s_range is None else s_range
     if proj_id != "theta0":
         raise ValueError("density PDFs currently require theta0")
     targets = np.arange(int(start), int(stop) + 1, int(stride), dtype=int)
     delta_edges = np.linspace(delta_range[0], delta_range[1], int(pdf_bins) + 1)
     s_edges = np.linspace(s_range[0], s_range[1], int(pdf_bins) + 1)
     tasks = [
-        (model, model_sfr, targets, proj_id, delta_edges, s_edges)
+        (
+            model,
+            model_sfr,
+            targets,
+            proj_id,
+            quantity_spec.field,
+            delta_edges,
+            s_edges,
+        )
         for model, model_sfr in ranked
     ]
     if int(workers) == 1:
@@ -146,8 +163,12 @@ def analyze_suite_pdfs(
         "mean_sfr10": np.asarray([result["mean_sfr10"] for result in results]),
         "sfr_time_bounds": np.asarray(DEFAULT_SFR_RANGE),
         "projection_id": np.asarray(proj_id),
-        "field": np.asarray("nH"),
-        "delta_definition": np.asarray("Sigma/<Sigma>-1"),
+        "quantity": np.asarray(quantity_spec.key),
+        "field": np.asarray(quantity_spec.field),
+        "quantity_label": np.asarray(quantity_spec.label),
+        "quantity_symbol": np.asarray(quantity_spec.symbol),
+        "projected_physical_unit": np.asarray(quantity_spec.physical_unit),
+        "delta_definition": np.asarray("map/<map>-1"),
         "s_definition": np.asarray("ln(Sigma/<Sigma>)"),
         "pdf_weighting": np.asarray("area"),
         "pdf_normalization": np.asarray("all pixels including out-of-range tails"),
@@ -157,13 +178,9 @@ def analyze_suite_pdfs(
         "delta_centers": 0.5 * (delta_edges[:-1] + delta_edges[1:]),
         "s_edges": s_edges,
         "s_centers": 0.5 * (s_edges[:-1] + s_edges[1:]),
-        "pdf_delta_area": np.asarray(
-            [result["pdf_delta_area"] for result in results]
-        ),
+        "pdf_delta_area": np.asarray([result["pdf_delta_area"] for result in results]),
         "pdf_s_area": np.asarray([result["pdf_s_area"] for result in results]),
-        "std_delta_time": np.asarray(
-            [result["std_delta_time"] for result in results]
-        ),
+        "std_delta_time": np.asarray([result["std_delta_time"] for result in results]),
         "std_s_time": np.asarray([result["std_s_time"] for result in results]),
         "mean_sigma_code": np.asarray(
             [result["mean_sigma_code"] for result in results]
@@ -305,12 +322,8 @@ def attach_pdf_summary(data, summary, products):
         "sqrt(alfven_x1^2+alfven_x2^2+alfven_x3^2)"
     )
     augmented["mach_3d_definition"] = np.asarray("sigma_3d/thermal")
-    augmented["plasma_beta_definition"] = np.asarray(
-        "2*thermal^2/alfven_3d^2"
-    )
-    augmented["mach_mhd_definition"] = np.asarray(
-        "mach_3d/sqrt(1+1/plasma_beta)"
-    )
+    augmented["plasma_beta_definition"] = np.asarray("2*thermal^2/alfven_3d^2")
+    augmented["mach_mhd_definition"] = np.asarray("mach_3d/sqrt(1+1/plasma_beta)")
     return augmented
 
 
@@ -339,7 +352,9 @@ def attach_velocity_summary(
         time = np.asarray(history["time"], dtype=float)
         use = np.isfinite(time) & (time >= bounds[0]) & (time <= bounds[1])
         if not np.any(use):
-            raise ValueError(f"{model.name} has no history inside requested time bounds")
+            raise ValueError(
+                f"{model.name} has no history inside requested time bounds"
+            )
         speeds = history_speeds(history)
         speeds.update(derived_velocity_quantities(speeds))
         for key in stored_keys:
@@ -374,7 +389,9 @@ def pdf_display_limits(centers, density, floor=DEFAULT_PDF_DISPLAY_FLOOR):
     return x_limits, (floor / 2.0, peak * 1.5)
 
 
-def plot_pdf_width_correlations(summary, output, *, dpi=180):
+def plot_pdf_width_correlations(
+    summary, output, *, quantity_label="Gas column", dpi=180
+):
     """Plot delta and s standard deviations against kappa, rho-star, and SFR."""
     color_values = summary["mean_sfr10"].to_numpy(dtype=float)
     cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
@@ -444,7 +461,7 @@ def plot_pdf_width_correlations(summary, output, *, dpi=180):
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
     fig.suptitle(
-        "Gas-column PDF widths: 200--600 Myr median and 16th--84th percentiles",
+        f"{quantity_label} PDF widths: 200--600 Myr median and 16th--84th percentiles",
         fontsize=13,
     )
     fig.subplots_adjust(
@@ -455,7 +472,9 @@ def plot_pdf_width_correlations(summary, output, *, dpi=180):
     print(f"Wrote {output}", flush=True)
 
 
-def plot_pdf_width_velocity_correlations(summary, output, *, dpi=180):
+def plot_pdf_width_velocity_correlations(
+    summary, output, *, quantity_label="Gas column", dpi=180
+):
     """Plot both PDF widths against all seven characteristic speeds."""
     color_values = summary["mean_sfr10"].to_numpy(dtype=float)
     cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
@@ -483,9 +502,7 @@ def plot_pdf_width_velocity_correlations(summary, output, *, dpi=180):
             median = summary[field].to_numpy(dtype=float)
             low = summary[low_field].to_numpy(dtype=float)
             high = summary[high_field].to_numpy(dtype=float)
-            valid = np.all(
-                np.isfinite([x, x_low, x_high, median, low, high]), axis=0
-            )
+            valid = np.all(np.isfinite([x, x_low, x_high, median, low, high]), axis=0)
             axis.errorbar(
                 x[valid],
                 median[valid],
@@ -526,7 +543,7 @@ def plot_pdf_width_velocity_correlations(summary, output, *, dpi=180):
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
     fig.suptitle(
-        "Gas-column PDF width versus mass-weighted characteristic speed: "
+        f"{quantity_label} PDF width versus mass-weighted characteristic speed: "
         "200--600 Myr medians and 16th--84th percentiles",
         fontsize=13,
     )
@@ -538,7 +555,9 @@ def plot_pdf_width_velocity_correlations(summary, output, *, dpi=180):
     print(f"Wrote {output}", flush=True)
 
 
-def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
+def plot_pdf_width_derived_velocity_correlations(
+    summary, output, *, quantity_label="Gas column", dpi=180
+):
     """Plot both PDF widths against 3D speeds and Mach diagnostics."""
     color_values = summary["mean_sfr10"].to_numpy(dtype=float)
     cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
@@ -557,9 +576,7 @@ def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
         ),
     )
     fig, axes = plt.subplots(2, 4, figsize=(14.4, 7.6), sharex="col")
-    for column, (quantity, title, xlabel) in enumerate(
-        DERIVED_VELOCITY_QUANTITIES
-    ):
+    for column, (quantity, title, xlabel) in enumerate(DERIVED_VELOCITY_QUANTITIES):
         x = summary[f"{quantity}_time_median"].to_numpy(dtype=float)
         x_low = summary[f"{quantity}_time_percentile16"].to_numpy(dtype=float)
         x_high = summary[f"{quantity}_time_percentile84"].to_numpy(dtype=float)
@@ -568,9 +585,7 @@ def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
             median = summary[field].to_numpy(dtype=float)
             low = summary[low_field].to_numpy(dtype=float)
             high = summary[high_field].to_numpy(dtype=float)
-            valid = np.all(
-                np.isfinite([x, x_low, x_high, median, low, high]), axis=0
-            )
+            valid = np.all(np.isfinite([x, x_low, x_high, median, low, high]), axis=0)
             axis.errorbar(
                 x[valid],
                 median[valid],
@@ -611,7 +626,7 @@ def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
     fig.suptitle(
-        "Gas-column PDF width versus 3D velocity and Mach diagnostics: "
+        f"{quantity_label} PDF width versus 3D velocity and Mach diagnostics: "
         "200--600 Myr medians and 16th--84th percentiles",
         fontsize=13,
     )
@@ -625,6 +640,8 @@ def plot_pdf_width_derived_velocity_correlations(summary, output, *, dpi=180):
 
 def plot_median_pdfs(data, ranked, output, *, dpi=180):
     """Plot all-model temporal median delta and s PDFs with Gaussian s fits."""
+    quantity_spec = archive_projected_quantity(data)
+    symbol = quantity_spec.symbol
     cmap, norm = sfr_colormap(data["mean_sfr10"], DEFAULT_CMAP, "log")
     fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.5))
     for index in reversed(range(len(ranked))):
@@ -651,8 +668,8 @@ def plot_median_pdfs(data, ranked, output, *, dpi=180):
             linewidth=0.8,
             alpha=0.65,
         )
-    axes[0].set_xlabel(r"$\delta=\Sigma/\langle\Sigma\rangle-1$")
-    axes[1].set_xlabel(r"$s=\ln(\Sigma/\langle\Sigma\rangle)$")
+    axes[0].set_xlabel(rf"$\delta={symbol}/\langle {symbol}\rangle-1$")
+    axes[1].set_xlabel(rf"$s=\ln({symbol}/\langle {symbol}\rangle)$")
     axes[0].set_ylabel(r"area-weighted $p(\delta)$")
     axes[1].set_ylabel(r"area-weighted $p(s)$")
     for axis, centers, density in zip(
@@ -674,7 +691,7 @@ def plot_median_pdfs(data, ranked, output, *, dpi=180):
         r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
     )
     fig.suptitle(
-        "Gas-column PDFs: 200--600 Myr temporal medians "
+        f"{quantity_spec.label.capitalize()} PDFs: 200--600 Myr temporal medians "
         "(dashed: Gaussian fits to $p(s)$)",
         fontsize=13,
     )
@@ -686,6 +703,8 @@ def plot_median_pdfs(data, ranked, output, *, dpi=180):
 
 def plot_s_pdf_fit_grid(data, ranked, output, *, dpi=180):
     """Plot each model's median s PDF and Gaussian fit in a 4-by-8 grid."""
+    quantity_spec = archive_projected_quantity(data)
+    symbol = quantity_spec.symbol
     cmap, norm = sfr_colormap(data["mean_sfr10"], DEFAULT_CMAP, "log")
     fig, axes = plt.subplots(4, 8, figsize=(18.0, 9.8), sharex=True, sharey=True)
     positive = np.concatenate(
@@ -725,10 +744,10 @@ def plot_s_pdf_fit_grid(data, ranked, output, *, dpi=180):
         axis.set_title(f"{index + 1}. {short_model_name(model)}", fontsize=7.5)
         axis.grid(alpha=0.12, which="both")
         axis.tick_params(direction="in", labelsize=7)
-    fig.supxlabel(r"$s=\ln(\Sigma/\langle\Sigma\rangle)$")
+    fig.supxlabel(rf"$s=\ln({symbol}/\langle {symbol}\rangle)$")
     fig.supylabel(r"area-weighted $p(s)$")
     fig.suptitle(
-        "Median gas-column $s$ PDFs, 200--600 Myr "
+        f"Median {quantity_spec.label} $s$ PDFs, 200--600 Myr "
         "(shading: 16th--84th percentiles; dashed: Gaussian fit)",
         fontsize=13,
     )
@@ -741,6 +760,7 @@ def plot_s_pdf_fit_grid(data, ranked, output, *, dpi=180):
 def render_suite_density_pdf(
     suite,
     *,
+    quantity="gas",
     model_glob=DEFAULT_MODEL_GLOB,
     proj_id="theta0",
     output_dir=None,
@@ -748,17 +768,22 @@ def render_suite_density_pdf(
     stop=DEFAULT_TIME_RANGE[1],
     stride=1,
     sfr_bounds=DEFAULT_SFR_RANGE,
-    delta_range=DEFAULT_DELTA_RANGE,
-    s_range=DEFAULT_S_RANGE,
+    delta_range=None,
+    s_range=None,
     pdf_bins=DEFAULT_PDF_BINS,
     workers=1,
     history_samples=DEFAULT_HISTORY_SAMPLES,
     dpi=180,
     overwrite=False,
 ):
-    """Analyze, cache, and plot suite gas-column density PDFs."""
+    """Analyze, cache, and plot suite projected-quantity PDFs."""
     suite = Path(suite).expanduser()
-    output_dir = Path(output_dir) if output_dir else suite / DEFAULT_OUTPUT_NAME
+    quantity_spec = projected_quantity(quantity)
+    delta_range = quantity_spec.delta_range if delta_range is None else delta_range
+    s_range = quantity_spec.s_range if s_range is None else s_range
+    output_dir = (
+        Path(output_dir) if output_dir else suite / f"{quantity_spec.slug}_pdf_theta0"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     models = [
         model
@@ -766,15 +791,18 @@ def render_suite_density_pdf(
         if model.name not in EXCLUDED_MODELS
     ]
     ranked = rank_models_by_sfr(models, bounds=sfr_bounds, max_rows=10000)
-    archive = output_dir / DEFAULT_ARCHIVE_NAME
+    archive = output_dir / f"{quantity_spec.slug}_pdfs.npz"
     if archive.exists() and not overwrite:
         print(f"Loading existing {archive}", flush=True)
         data = load_pdf_archive(archive)
         if list(data["model"]) != [model.name for model, _ in ranked]:
             raise ValueError("cached PDF model ordering does not match SFR ranking")
+        if str(np.asarray(data.get("field", "nH")).item()) != quantity_spec.field:
+            raise ValueError("cached PDF field does not match requested quantity")
     else:
         data = analyze_suite_pdfs(
             ranked,
+            quantity=quantity_spec.key,
             proj_id=proj_id,
             start=start,
             stop=stop,
@@ -795,23 +823,37 @@ def render_suite_density_pdf(
     data = attach_pdf_summary(data, summary, products)
     _atomic_savez(archive, **data)
     print(f"Wrote {archive}", flush=True)
-    _atomic_csv(summary, output_dir / f"{DEFAULT_SUMMARY_NAME}.csv")
+    summary_name = f"{quantity_spec.slug}_pdf_widths"
+    _atomic_csv(summary, output_dir / f"{summary_name}.csv")
     plot_pdf_width_correlations(
-        summary, output_dir / f"{DEFAULT_SUMMARY_NAME}_correlations.png", dpi=dpi
+        summary,
+        output_dir / f"{summary_name}_correlations.png",
+        quantity_label=quantity_spec.label.capitalize(),
+        dpi=dpi,
     )
     plot_pdf_width_velocity_correlations(
         summary,
-        output_dir / f"{DEFAULT_SUMMARY_NAME}_velocity_correlations.png",
+        output_dir / f"{summary_name}_velocity_correlations.png",
+        quantity_label=quantity_spec.label.capitalize(),
         dpi=dpi,
     )
     plot_pdf_width_derived_velocity_correlations(
         summary,
-        output_dir / f"{DEFAULT_SUMMARY_NAME}_derived_velocity_correlations.png",
+        output_dir / f"{summary_name}_derived_velocity_correlations.png",
+        quantity_label=quantity_spec.label.capitalize(),
         dpi=dpi,
     )
-    plot_median_pdfs(data, ranked, output_dir / "density_pdf_time_median.png", dpi=dpi)
+    plot_median_pdfs(
+        data,
+        ranked,
+        output_dir / f"{quantity_spec.slug}_pdf_time_median.png",
+        dpi=dpi,
+    )
     plot_s_pdf_fit_grid(
-        data, ranked, output_dir / "density_s_pdf_gaussian_fits.png", dpi=dpi
+        data,
+        ranked,
+        output_dir / f"{quantity_spec.slug}_s_pdf_gaussian_fits.png",
+        dpi=dpi,
     )
     return data, ranked
 
@@ -821,16 +863,19 @@ def main(argv=None):
     parser.add_argument("suite", nargs="?", type=Path, default=DEFAULT_SUITE)
     parser.add_argument("--model-glob", default=DEFAULT_MODEL_GLOB)
     parser.add_argument("--projection", default="theta0")
+    parser.add_argument(
+        "--quantity", choices=tuple(PROJECTED_QUANTITIES), default="gas"
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--start", type=int, default=DEFAULT_TIME_RANGE[0])
     parser.add_argument("--stop", type=int, default=DEFAULT_TIME_RANGE[1])
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--sfr-start", type=float, default=DEFAULT_SFR_RANGE[0])
     parser.add_argument("--sfr-stop", type=float, default=DEFAULT_SFR_RANGE[1])
-    parser.add_argument("--delta-min", type=float, default=DEFAULT_DELTA_RANGE[0])
-    parser.add_argument("--delta-max", type=float, default=DEFAULT_DELTA_RANGE[1])
-    parser.add_argument("--s-min", type=float, default=DEFAULT_S_RANGE[0])
-    parser.add_argument("--s-max", type=float, default=DEFAULT_S_RANGE[1])
+    parser.add_argument("--delta-min", type=float)
+    parser.add_argument("--delta-max", type=float)
+    parser.add_argument("--s-min", type=float)
+    parser.add_argument("--s-max", type=float)
     parser.add_argument("--pdf-bins", type=int, default=DEFAULT_PDF_BINS)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--history-samples", type=int, default=DEFAULT_HISTORY_SAMPLES)
@@ -851,12 +896,22 @@ def main(argv=None):
         )
     if args.sfr_stop <= args.sfr_start:
         parser.error("--sfr-stop must be greater than --sfr-start")
-    if args.delta_max <= args.delta_min or args.s_max <= args.s_min:
+    quantity_spec = projected_quantity(args.quantity)
+    delta_range = (
+        quantity_spec.delta_range[0] if args.delta_min is None else args.delta_min,
+        quantity_spec.delta_range[1] if args.delta_max is None else args.delta_max,
+    )
+    s_range = (
+        quantity_spec.s_range[0] if args.s_min is None else args.s_min,
+        quantity_spec.s_range[1] if args.s_max is None else args.s_max,
+    )
+    if delta_range[1] <= delta_range[0] or s_range[1] <= s_range[0]:
         parser.error("PDF maxima must be greater than minima")
     if args.dpi <= 0:
         parser.error("--dpi must be positive")
     render_suite_density_pdf(
         args.suite,
+        quantity=args.quantity,
         model_glob=args.model_glob,
         proj_id=args.projection,
         output_dir=args.output_dir,
@@ -864,8 +919,8 @@ def main(argv=None):
         stop=args.stop,
         stride=args.stride,
         sfr_bounds=(args.sfr_start, args.sfr_stop),
-        delta_range=(args.delta_min, args.delta_max),
-        s_range=(args.s_min, args.s_max),
+        delta_range=delta_range,
+        s_range=s_range,
         pdf_bins=args.pdf_bins,
         workers=args.workers,
         history_samples=args.history_samples,

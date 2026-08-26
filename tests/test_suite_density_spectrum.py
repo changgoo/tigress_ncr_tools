@@ -12,6 +12,7 @@ from tigress_ncr_tools.plot_suite_density_spectrum import (
     create_spectrum_figure,
     exclude_corrupted_archive_models,
     integral_scale,
+    model_power2d_archive,
     overdensity_power,
     physical_time_mean_power_2d,
     plot_suite_time_mean_power_2d,
@@ -53,6 +54,42 @@ def test_overdensity_power_remaps_then_uses_physical_shearing_wavevector():
     assert result["shear"] == shear
     np.testing.assert_allclose(result["mean_sigma"], 2.0, rtol=0.0, atol=1.0e-14)
     assert not result["has_negative_sigma"]
+
+
+def test_overdensity_power_uses_requested_proj2d_field():
+    size = 16
+    edges = np.arange(size + 1, dtype=float)
+    centers = edges[:-1] + 0.5
+    yy, xx = np.meshgrid(centers, centers, indexing="ij")
+    frame = {
+        "time": 0.0,
+        "theta": 0.0,
+        "x_edges": edges,
+        "y_edges": edges,
+        "x_centers": centers,
+        "y_centers": centers,
+        "x_spacing": 1.0,
+        "y_spacing": 1.0,
+        "fields": {
+            "nH": np.ones((size, size)),
+            "nHI": 2.0 + 0.5 * np.cos(2.0 * np.pi * xx / size),
+        },
+    }
+    result = overdensity_power(
+        frame, 1.0, 0.01, field="nHI", k_edges=np.linspace(0.0, np.pi, 33)
+    )
+    assert result["mean_sigma"] == pytest.approx(2.0)
+    assert np.nanmax(result["power"]) > 0.0
+
+
+def test_per_model_2d_archives_are_separate_by_quantity(tmp_path):
+    gas = model_power2d_archive(tmp_path, quantity="gas")
+    hi = model_power2d_archive(tmp_path, quantity="hi")
+    em = model_power2d_archive(tmp_path, quantity="em")
+    assert gas.parent.name == "density_power_2d"
+    assert hi.parent.name == "hi_power_2d"
+    assert em.parent.name == "em_power_2d"
+    assert len({gas, hi, em}) == 3
 
 
 def test_time_mean_power_selects_requested_interval():
@@ -142,9 +179,7 @@ def test_diagnostics_are_measured_for_every_instantaneous_spectrum():
     }
     diagnostics = spectrum_time_diagnostics(data)
     assert diagnostics["integral_scale_time_pc"].shape == (1, 2)
-    np.testing.assert_allclose(
-        diagnostics["spectral_slope_alpha_time"], [[2.0, 3.0]]
-    )
+    np.testing.assert_allclose(diagnostics["spectral_slope_alpha_time"], [[2.0, 3.0]])
     assert np.all(diagnostics["slope_fit_bin_count_time"] >= 3)
 
 
@@ -258,9 +293,7 @@ def test_time_mean_2d_spectrum_suite_figure(tmp_path):
         "mean_power_2d": np.asarray([base, 0.5 * base]),
     }
     output = tmp_path / "power2d.png"
-    plot_suite_time_mean_power_2d(
-        data, ranked, output, mode_limit=3.0, dpi=40
-    )
+    plot_suite_time_mean_power_2d(data, ranked, output, mode_limit=3.0, dpi=40)
     assert output.stat().st_size > 0
 
 

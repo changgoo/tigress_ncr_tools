@@ -24,6 +24,13 @@ plot-suite-hst-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite
 # Shear-aware theta0 spectra of delta=Sigma/<Sigma>-1.
 plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 
+# The same proj2d PDF/PS analysis for H I column and emission measure.
+plot-suite-density-pdf /tigress/changgoo/anvil/TIGRESS-NCR-suite --quantity hi --workers 8
+plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --quantity em --workers 8
+
+# Six-phase fractions, heights, velocity dispersions, and split Alfvén speeds.
+plot-suite-phases /tigress/changgoo/anvil/TIGRESS-NCR-suite --workers 8
+
 # Rank 32 models by <SFR10> over t=200--600 and render 4x8 theta0 movies.
 plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
 plot-suite-evolution /tigress/changgoo/anvil/TIGRESS-NCR-suite \
@@ -197,6 +204,27 @@ below a PDF-density envelope of `1e-4`.
 
 ```bash
 plot-suite-density-pdf /tigress/changgoo/anvil/TIGRESS-NCR-suite --workers 4
+```
+
+Add `--quantity hi` or `--quantity em` to run the identical `proj2d` PDF
+estimator for atomic-hydrogen column or emission measure. The power-spectrum
+command accepts the same option and keeps separate per-species 2D caches and
+suite products. Field definitions, tracer-specific PDF ranges, commands, and
+interpretation are in
+[`docs/projected_species_analysis.md`](docs/projected_species_analysis.md).
+
+## Six-phase zprof diagnostics
+
+`plot-suite-phases` combines the NCR phase z-profiles into CMM+CNM, UNM, WNM,
+WIM, WHIM, and HIM. It stores full temporal scatter for whole-box and
+within-`H_gas` mass/volume fractions, mass/volume RMS heights, component and
+3D velocity dispersions, and mean-field versus perturbed-field Alfvén speeds.
+The omitted UIM is retained as an explicit closure residual rather than
+renormalizing the requested six phases. Definitions and output schemas are in
+[`docs/phase_resolved_analysis.md`](docs/phase_resolved_analysis.md).
+
+```bash
+plot-suite-phases /tigress/changgoo/anvil/TIGRESS-NCR-suite --workers 8
 ```
 
 ## Suite PRFM diagnostics

@@ -34,11 +34,27 @@ def test_frame_density_pdf_normalizes_and_measures_pixels_directly():
     np.testing.assert_allclose(
         np.sum(result["pdf_delta_area"] * np.diff(delta_edges)), 1.0
     )
-    np.testing.assert_allclose(
-        np.sum(result["pdf_s_area"] * np.diff(s_edges)), 1.0
-    )
+    np.testing.assert_allclose(np.sum(result["pdf_s_area"] * np.diff(s_edges)), 1.0)
     assert result["std_delta"] == np.std(ratio - 1.0)
     assert result["std_s"] == np.std(np.log(ratio))
+
+
+def test_frame_density_pdf_uses_requested_proj2d_field():
+    frame = {
+        "theta": 0.0,
+        "fields": {
+            "nH": np.ones((2, 2)),
+            "nHI": np.asarray([[1.0, 1.0], [3.0, 3.0]]),
+        },
+    }
+    result = frame_density_pdf(
+        frame,
+        np.linspace(-1.0, 1.0, 17),
+        np.linspace(-1.0, 1.0, 21),
+        field="nHI",
+    )
+    assert result["mean_sigma_code"] == 2.0
+    assert result["std_delta"] == 0.5
 
 
 def test_gaussian_fit_matches_binned_pdf_moments():
@@ -93,9 +109,7 @@ def _plot_data():
             np.exp(-0.5 * ((s_centers + 0.4) / 0.8) ** 2),
         ]
     )
-    delta_pdf = np.asarray(
-        [np.exp(-delta_centers), np.exp(-0.7 * delta_centers)]
-    )
+    delta_pdf = np.asarray([np.exp(-delta_centers), np.exp(-0.7 * delta_centers)])
     return {
         "mean_sfr10": np.asarray([1.0e-2, 1.0e-3]),
         "s_centers": s_centers,
