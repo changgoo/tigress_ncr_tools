@@ -58,6 +58,13 @@ The archive and CSV also store the arithmetic mean, population standard
 deviation, and accepted-sample count. Model colors use the logarithmically
 normalized 200--600 Myr mean SFR through `plasma`.
 
+These primary widths are the square roots of population variances measured
+directly from the pixels; they are not parameters of a Gaussian fit. The
+separate `median_s_gaussian_sigma` value is the moment width of the
+time-median \(s\)-PDF described in Section 3. For a skewed or multimodal PDF,
+there is no reason for that overlay width to equal the temporal median of the
+instantaneous direct widths.
+
 The 2-by-3 correlation figure places \(\sigma_\delta\) and \(\sigma_s\) in its
 two rows and uses the following three horizontal variables:
 

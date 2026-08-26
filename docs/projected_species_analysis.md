@@ -66,6 +66,45 @@ products use `SUITE/em_pdf_theta0/` and the corresponding `em_*` names. See
 [density_pdf.md](density_pdf.md) for the estimator, temporal summaries,
 Gaussian comparison, and correlation products.
 
+### Low-column H I bump and neutral-fraction censoring
+
+The very low-column component is not well described by a log-normal. A direct
+full-VTK check was made for `R8_8pc_NCR_row0010` at \(t=380.0019\) Myr (VTK
+0041), an epoch with a prominent secondary peak at \(s=-7.775\). The diagnostic
+reconstructs
+
+\[
+\Sigma_{\rm HI}=\int n_{\rm H}x_{\rm HI}\,dz
+\]
+
+and repeats the projection after setting the contribution from cells with
+\(x_{\rm HI}<0.01\) to zero. Run it with
+
+```bash
+plot-hi-fraction-mask \
+  /tigress/changgoo/anvil/TIGRESS-NCR-suite/R8_8pc_NCR_row0010 41 \
+  --xhi-min 0.01 --overwrite
+```
+
+The raw VTK reconstruction agrees with the stored proj2d map to a median
+relative error of \(2.1\times10^{-8}\). Sightlines within
+\(|s+7.775|<0.15\), which contain 2.44% of the map area, lose 100% of their H I
+column under the cut. The cut removes only 0.0973% of the global H I column but
+makes 22.29% of all sightlines exactly zero. Thus the prominent bump is made
+by tiny residual H I columns in gas with \(x_{\rm HI}<0.01\); it is not a
+separate neutral structure. This sensitivity does not by itself prove that
+the small neutral fractions are numerically wrong--they may be physical
+residual fractions--but it does show that the low-column PDF component is a
+censoring/floor-sensitive tracer feature.
+
+For H I, report the zero/censored area fraction separately and compare the
+conditional PDF of detected positive columns. Robust scalar alternatives to
+\(\sigma_s\) include log-column interpercentile widths above a stated column
+threshold and linear-space fractional widths; an observational
+\(N_{\rm HI}\) threshold is generally easier to interpret than a cell-level
+\(x_{\rm HI}\) cut. The diagnostic products are written to
+`SUITE/hi_low_fraction_mask_test/`.
+
 ## 3. Power spectra
 
 Run the shear-aware spectra with

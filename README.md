@@ -213,6 +213,10 @@ suite products. Field definitions, tracer-specific PDF ranges, commands, and
 interpretation are in
 [`docs/projected_species_analysis.md`](docs/projected_species_analysis.md).
 
+`plot-hi-fraction-mask MODEL VTK_NUMBER` reconstructs a face-on H I
+column from the full VTK ranks and compares it with a version that excludes
+cells below a chosen neutral-fraction threshold.
+
 ## Six-phase zprof diagnostics
 
 `plot-suite-phases` combines the NCR phase z-profiles into CMM+CNM, UNM, WNM,
