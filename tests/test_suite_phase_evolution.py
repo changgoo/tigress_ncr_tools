@@ -8,6 +8,7 @@ import tigress_ncr_tools.plot_suite_phase_evolution as phase_module
 from tigress_ncr_tools.plot_suite_phase_evolution import (
     FRACTION_FIELDS,
     PHASES,
+    PHASE_CORRELATION_FAMILIES,
     PHASE_PARAMETER_SPECS,
     PLOTTED_PHASE_SUMMARY_FIELDS,
     PROFILE_FIELDS,
@@ -159,6 +160,16 @@ def test_phase_parameter_correlations_use_model_medians():
     )
     np.testing.assert_allclose(correlations["spearman_rho"], 1.0)
     assert np.all(correlations["model_count"] == 4)
+
+
+def test_correlation_families_cover_every_plotted_quantity_once():
+    fields = [
+        field
+        for _, family_fields, _ in PHASE_CORRELATION_FAMILIES
+        for field in family_fields
+    ]
+    assert len(fields) == len(set(fields))
+    assert set(fields) == set(PLOTTED_PHASE_SUMMARY_FIELDS)
 
 
 def test_reference_axis_limits_exclude_early_anomaly():

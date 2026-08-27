@@ -167,7 +167,16 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 - `phase_neutral_fraction_parameter_relations.png` and
   `phase_ionized_fraction_parameter_relations.png`: separate direct-relation
   figures for the two reduced phase groups;
-- `phase_scale_heights_parameter_correlations.png` and
+- `phase_mass_scale_height_pc_parameter_relations.png` and
+  `phase_volume_scale_height_pc_parameter_relations.png`: full scale-height
+  scatter corresponding to the two scale-height matrix panels;
+- `phase_sigma_3d_box_parameter_relations.png`,
+  `phase_sigma_3d_hgas_parameter_relations.png`, and the four corresponding
+  `phase_alfven_{mean,perturbed}_3d_{box,hgas}_parameter_relations.png`
+  products: full 32-model scatter with temporal 16th--84th percentile bars
+  corresponding to every dynamics matrix panel;
+- `phase_fractions_parameter_correlations.png`,
+  `phase_scale_heights_parameter_correlations.png`, and
   `phase_dynamics_parameter_correlations.png`: annotated phase-by-parameter
   Spearman heatmaps with nine phase rows, seven predictors, and a high-contrast
   diverging scale;
@@ -176,14 +185,17 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 - whole-box and inner-slab 3D velocity-dispersion evolution;
 - whole-box and inner-slab mean/perturbed Alfvén-speed evolution.
 
+Thus every fraction, scale-height, velocity-dispersion, and Alfvén diagnostic
+has a time-evolution view, a direct parameter-scatter view, and a correlation
+matrix view. Related time series remain grouped into compact evolution figures.
 The ensemble-summary points are the 400--600 Myr temporal medians for each
 model and phase; their bars are the corresponding temporal 16th--84th
 percentiles. Black connecting symbols show the median across models only as a
-visual guide. Fraction correlations are shown as direct parameter-relation
-panels rather than coefficient matrices: point color encodes mean SFR, bars
-show temporal 16th--84th percentiles, and each panel reports its Spearman
-coefficient. The reduced neutral and ionized values are sums at every time
-before temporal statistics are calculated. They can sum to less than unity
+visual guide. Fraction correlations are shown in both direct parameter-relation
+panels and coefficient matrices. In the direct panels, point color encodes
+mean SFR, bars show temporal 16th--84th percentiles, and each panel reports its
+Spearman coefficient. The reduced neutral and ionized values are summed at
+every time before temporal statistics are calculated. They can sum to less than unity
 because UIM remains an explicit, unassigned residual.
 
 The remaining heatmaps correlate the same per-model temporal medians and do
@@ -196,8 +208,9 @@ component masses, volumes, first moments, and second moments at each time;
 they are not averages of the six-phase diagnostics. The Whole row is measured
 directly from `whole.zprof`, so it includes UIM. The matrices include mean
 \(\Sigma_{\rm SFR,10}\) as the seventh x-axis predictor. The Whole volume RMS
-height is fixed by the common box geometry, so its rank correlation is
-undefined and appears as `--` rather than as a spurious zero correlation.
+height is fixed by the common box geometry, and Whole mass/volume fractions
+are unity by definition. Their rank correlations are undefined and appear as
+`--` rather than as spurious zero correlations.
 
 The long-form CSV is the primary analysis product. It preserves the three
 velocity components and both magnetic components even when the standard

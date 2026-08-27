@@ -167,22 +167,38 @@ PHASE_SUMMARY_LABELS = {
     "alfven_perturbed_3d_hgas": "perturbed vA: Hgas",
 }
 PLOTTED_PHASE_SUMMARY_FIELDS = tuple(PHASE_SUMMARY_LABELS)
+FRACTION_CORRELATION_FIELDS = (
+    "mass_fraction_box",
+    "volume_fraction_box",
+    "mass_fraction_hgas",
+    "volume_fraction_hgas",
+)
+SCALE_HEIGHT_CORRELATION_FIELDS = (
+    "mass_scale_height_pc",
+    "volume_scale_height_pc",
+)
+DYNAMIC_CORRELATION_FIELDS = (
+    "sigma_3d_box",
+    "sigma_3d_hgas",
+    "alfven_mean_3d_box",
+    "alfven_mean_3d_hgas",
+    "alfven_perturbed_3d_box",
+    "alfven_perturbed_3d_hgas",
+)
 PHASE_CORRELATION_FAMILIES = (
     (
+        "fractions",
+        FRACTION_CORRELATION_FIELDS,
+        "Phase-fraction correlations with environmental parameters",
+    ),
+    (
         "scale_heights",
-        PLOTTED_PHASE_SUMMARY_FIELDS[4:6],
+        SCALE_HEIGHT_CORRELATION_FIELDS,
         "Phase scale-height correlations with environmental parameters",
     ),
     (
         "dynamics",
-        (
-            "sigma_3d_box",
-            "sigma_3d_hgas",
-            "alfven_mean_3d_box",
-            "alfven_mean_3d_hgas",
-            "alfven_perturbed_3d_box",
-            "alfven_perturbed_3d_hgas",
-        ),
+        DYNAMIC_CORRELATION_FIELDS,
         "Phase speed correlations with environmental parameters",
     ),
 )
@@ -1109,6 +1125,87 @@ def plot_reduced_phase_fraction_parameter_relations(
         print(f"Wrote {output}", flush=True)
 
 
+def plot_phase_structure_dynamics_parameter_relations(
+    summary,
+    ranked,
+    output_dir,
+    *,
+    phases=CORRELATION_PHASES,
+    bounds=DEFAULT_SUMMARY_RANGE,
+    sfr_bounds=DEFAULT_SFR_RANGE,
+    dpi=180,
+):
+    """Plot full model scatter behind structure and dynamics matrices."""
+    cmap, norm = sfr_colormap([value for _, value in ranked], DEFAULT_CMAP, "log")
+    fields = SCALE_HEIGHT_CORRELATION_FIELDS + DYNAMIC_CORRELATION_FIELDS
+    for field in fields:
+        figure, axes = plt.subplots(
+            len(phases),
+            len(PHASE_PARAMETER_AXIS_SPECS),
+            figsize=(22.0, 23.5),
+            sharex="col",
+            sharey="row",
+        )
+        for row, phase in enumerate(phases):
+            for column, (parameter, parameter_label, scale) in enumerate(
+                PHASE_PARAMETER_AXIS_SPECS
+            ):
+                axis = axes[row, column]
+                coefficient, count = _plot_parameter_relation_series(
+                    axis,
+                    summary,
+                    ranked,
+                    phase.key,
+                    field,
+                    parameter,
+                    scale,
+                    cmap,
+                    norm,
+                )
+                if scale == "log":
+                    axis.set_xscale("log")
+                axis.set_yscale("log")
+                axis.grid(alpha=0.16, which="both")
+                axis.tick_params(direction="in", top=True, right=True)
+                axis.text(
+                    0.04,
+                    0.94,
+                    rf"$\rho_s={coefficient:+.2f}$ ($N={count}$)",
+                    transform=axis.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=7.5,
+                    bbox={"facecolor": "white", "alpha": 0.62, "edgecolor": "none"},
+                )
+                if row == 0:
+                    axis.set_title(parameter_label, fontsize=10)
+                if row == len(phases) - 1:
+                    axis.set_xlabel(parameter_label, fontsize=9)
+            if field in SCALE_HEIGHT_CORRELATION_FIELDS:
+                unit = "[pc]"
+            else:
+                unit = r"[km s$^{-1}$]"
+            axes[row, 0].set_ylabel(f"{phase.label}\n{unit}")
+        figure.suptitle(
+            f"Direct model scatter for {PHASE_SUMMARY_LABELS[field]}: "
+            f"{bounds[0]:g}--{bounds[1]:g} Myr",
+            fontsize=14,
+        )
+        _add_sfr_colorbar(figure, ranked, cmap, norm, sfr_bounds)
+        figure.subplots_adjust(
+            left=0.075,
+            right=0.99,
+            bottom=0.075,
+            top=0.955,
+            hspace=0.12,
+            wspace=0.12,
+        )
+        output = Path(output_dir) / f"phase_{field}_parameter_relations.png"
+        figure.savefig(output, dpi=dpi, facecolor="white")
+        plt.close(figure)
+        print(f"Wrote {output}", flush=True)
+
+
 def _add_sfr_colorbar(fig, ranked, cmap, norm, bounds):
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     axis = fig.add_axes((0.36, 0.035, 0.28, 0.012))
@@ -1427,12 +1524,14 @@ def plot_phase_fraction_evolution(
     region="box",
     sfr_bounds=DEFAULT_SFR_RANGE,
     limit_bounds=DEFAULT_EVOLUTION_LIMIT_RANGE,
+    phases=CORRELATION_PHASES,
     dpi=180,
 ):
-    """Plot mass and volume fraction histories for all six phases."""
+    """Plot fraction histories for displayed and aggregate phases."""
     cmap, norm = sfr_colormap([value for _, value in ranked], DEFAULT_CMAP, "log")
-    fig, axes = plt.subplots(6, 2, figsize=(12.8, 17.0), sharex=True)
-    for row_index, phase in enumerate(PHASES):
+    height = 2.5 * len(phases) + 2.0
+    fig, axes = plt.subplots(len(phases), 2, figsize=(12.8, height), sharex=True)
+    for row_index, phase in enumerate(phases):
         phase_data = data[data["phase"] == phase.key]
         for model, mean_sfr in ranked:
             selected = phase_data[phase_data["model"] == model.name].sort_values("time")
@@ -1465,7 +1564,7 @@ def plot_phase_fraction_evolution(
     axes[-1, 0].set_xlabel("time [Myr]")
     axes[-1, 1].set_xlabel("time [Myr]")
     region_label = "whole box" if region == "box" else r"$|z|\leq H_{\rm gas}(t)$"
-    fig.suptitle(f"Six-phase fractions in {region_label}", fontsize=14)
+    fig.suptitle(f"Phase fractions in {region_label}", fontsize=14)
     _add_sfr_colorbar(fig, ranked, cmap, norm, sfr_bounds)
     fig.subplots_adjust(
         left=0.09, right=0.99, bottom=0.075, top=0.96, hspace=0.16, wspace=0.18
@@ -1485,13 +1584,18 @@ def plot_phase_six_panel(
     title,
     sfr_bounds=DEFAULT_SFR_RANGE,
     limit_bounds=DEFAULT_EVOLUTION_LIMIT_RANGE,
+    phases=CORRELATION_PHASES,
     log=True,
     dpi=180,
 ):
-    """Plot one or more diagnostics in a 3-by-2 six-phase layout."""
+    """Plot diagnostics for displayed and aggregate phases."""
     cmap, norm = sfr_colormap([value for _, value in ranked], DEFAULT_CMAP, "log")
-    fig, axes = plt.subplots(3, 2, figsize=(12.8, 11.4), sharex=True)
-    for axis, phase in zip(axes.flat, PHASES):
+    ncols = 3 if len(phases) > 6 else 2
+    nrows = int(np.ceil(len(phases) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(6.2 * ncols, 3.7 * nrows + 1.0), sharex=True
+    )
+    for axis, phase in zip(axes.flat, phases):
         phase_data = data[data["phase"] == phase.key]
         for model, mean_sfr in ranked:
             selected = phase_data[phase_data["model"] == model.name].sort_values("time")
@@ -1520,6 +1624,8 @@ def plot_phase_six_panel(
             limit_bounds,
             log=log,
         )
+    for axis in axes.flat[len(phases) :]:
+        axis.set_visible(False)
     for axis in axes[-1]:
         axis.set_xlabel("time [Myr]")
     for axis in axes[:, 0]:
@@ -1641,6 +1747,15 @@ def render_suite_phase_evolution(
         reduced_summary,
         ranked,
         output_dir,
+        bounds=summary_bounds,
+        sfr_bounds=sfr_bounds,
+        dpi=dpi,
+    )
+    plot_phase_structure_dynamics_parameter_relations(
+        correlation_summary,
+        ranked,
+        output_dir,
+        phases=CORRELATION_PHASES,
         bounds=summary_bounds,
         sfr_bounds=sfr_bounds,
         dpi=dpi,
