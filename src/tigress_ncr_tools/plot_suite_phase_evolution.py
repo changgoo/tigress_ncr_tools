@@ -175,7 +175,14 @@ PHASE_CORRELATION_FAMILIES = (
     ),
     (
         "dynamics",
-        PLOTTED_PHASE_SUMMARY_FIELDS[6:],
+        (
+            "sigma_3d_box",
+            "sigma_3d_hgas",
+            "alfven_mean_3d_box",
+            "alfven_mean_3d_hgas",
+            "alfven_perturbed_3d_box",
+            "alfven_perturbed_3d_hgas",
+        ),
         "Phase speed correlations with environmental parameters",
     ),
 )
