@@ -224,13 +224,18 @@ coefficients.
 
 ## Six-phase zprof diagnostics
 
-`plot-suite-phases` combines the NCR phase z-profiles into CMM+CNM, UNM, WNM,
+`plot-suite-phases` combines the NCR phase z-profiles into CNM+CMM, UNM, WNM,
 WIM, WHIM, and HIM. It stores full temporal scatter for whole-box and
 within-`H_gas` mass/volume fractions, mass/volume RMS heights, component and
 3D velocity dispersions, and mean-field versus perturbed-field Alfvén speeds.
-It also plots 400--600 Myr ensemble summaries and Spearman heatmaps against
-the four direct environmental inputs \(\Sigma_*,H_*,\Omega,q\) and the two
-derived predictors \(\kappa,\rho_*\).
+It also plots 400--600 Myr ensemble summaries against the four direct
+environmental inputs \(\Sigma_*,H_*,\Omega,q\) and the two derived predictors
+\(\kappa,\rho_*\), as well as the 200--600 Myr mean \(\Sigma_{\rm SFR,10}\).
+Fractions use direct phase-by-parameter panels with temporal ranges, including
+separate neutral and ionized reductions; scale heights and dynamics retain
+Spearman heatmaps with neutral, ionized, and true whole-gas rows. Evolution
+y-limits use the 200--600 Myr values so startup anomalies do not compress the
+later histories.
 The omitted UIM is retained as an explicit closure residual rather than
 renormalizing the requested six phases. Definitions and output schemas are in
 [`docs/phase_resolved_analysis.md`](docs/phase_resolved_analysis.md).

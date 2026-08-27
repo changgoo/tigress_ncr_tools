@@ -11,7 +11,7 @@ The phase definitions and Athena profile indices follow Table 3 of
 
 | displayed group | component profiles | physical selection |
 |---|---:|---|
-| CMM+CNM | `phase7 + phase11` | molecular/cold molecular plus cold neutral gas |
+| CNM+CMM | `phase7 + phase11` | cold neutral plus molecular/cold molecular gas |
 | UNM | `phase12` | unstable neutral gas, \(500<T<6000\) K |
 | WNM | `phase13` | warm neutral gas, \(6000<T<3.5\times10^4\) K |
 | WIM | `phase9 + phase10` | photoionized and collisionally ionized warm gas |
@@ -131,25 +131,46 @@ plot-suite-phases /tigress/changgoo/anvil/TIGRESS-NCR-suite \
 ```
 
 The default time range is 0--600 Myr, while model summaries use 400--600 Myr.
+Evolution plots retain the full time range, but their y-axis limits are based
+only on finite values at 200--600 Myr. This keeps startup anomalies from
+compressing the scientifically relevant evolution without hiding when those
+early curves leave the displayed range.
 `--stride` can produce a lower-cadence exploratory reduction without changing
 the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 
-- `phase_time_series.csv`: one row per model, time, and displayed phase;
+- `phase_time_series.csv`: one row per model, time, and displayed or aggregate
+  phase (`neutral`, `ionized`, and `whole` are included);
 - `phase_closure_time_series.csv`: selected-six sums and UIM residuals;
 - `phase_model_summary.csv`: mean, standard deviation, median, 16th/84th
   percentiles, and counts over the summary interval;
+- `phase_correlation_model_summary.csv`: temporal summaries for the six
+  displayed phases plus neutral, ionized, and true whole-gas rows used by the
+  correlation matrices;
+- `phase_two_phase_fraction_summary.csv`: the same temporal statistics for
+  reduced neutral (CNM+CMM+UNM+WNM) and ionized (WIM+WHIM+HIM) fractions,
+  without renormalizing away the UIM residual;
 - `phase_parameter_correlations.csv`: model-by-model Spearman coefficients
   for the standard displayed summaries against the four direct inputs
-  \(\Sigma_*,H_*,\Omega,q\) and the derived \(\kappa,\rho_*\);
+  \(\Sigma_*,H_*,\Omega,q\), the derived \(\kappa,\rho_*\), and mean
+  \(\Sigma_{\rm SFR,10}\) over 200--600 Myr;
 - `model_sfr_colors.csv`: the exact model ranking and color mapping;
 - `phase_fraction_model_summary.png`: temporal medians and 16th--84th
   percentile ranges for mass/volume fractions in the box and inner slab;
 - `phase_structure_speed_model_summary.png`: the corresponding phase scale
   heights, 3D velocity dispersions, and mean/perturbed Alfvén speeds;
-- `phase_fractions_parameter_correlations.png`,
-  `phase_scale_heights_parameter_correlations.png`, and
+- `phase_mass_fraction_box_parameter_relations.png`,
+  `phase_volume_fraction_box_parameter_relations.png`,
+  `phase_mass_fraction_hgas_parameter_relations.png`, and
+  `phase_volume_fraction_hgas_parameter_relations.png`: direct relations for
+  every displayed phase against all four input and two derived parameters,
+  plus mean \(\Sigma_{\rm SFR,10}\);
+- `phase_neutral_fraction_parameter_relations.png` and
+  `phase_ionized_fraction_parameter_relations.png`: separate direct-relation
+  figures for the two reduced phase groups;
+- `phase_scale_heights_parameter_correlations.png` and
   `phase_dynamics_parameter_correlations.png`: annotated phase-by-parameter
-  Spearman heatmaps;
+  Spearman heatmaps with nine phase rows, seven predictors, and a high-contrast
+  diverging scale;
 - whole-box and within-\(H_{\rm gas}\) fraction-evolution figures;
 - phase mass/volume scale-height evolution;
 - whole-box and inner-slab 3D velocity-dispersion evolution;
@@ -158,10 +179,25 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 The ensemble-summary points are the 400--600 Myr temporal medians for each
 model and phase; their bars are the corresponding temporal 16th--84th
 percentiles. Black connecting symbols show the median across models only as a
-visual guide. The heatmaps correlate the same per-model temporal medians and
-do not treat the correlated direct/derived predictors as independent causal
+visual guide. Fraction correlations are shown as direct parameter-relation
+panels rather than coefficient matrices: point color encodes mean SFR, bars
+show temporal 16th--84th percentiles, and each panel reports its Spearman
+coefficient. The reduced neutral and ionized values are sums at every time
+before temporal statistics are calculated. They can sum to less than unity
+because UIM remains an explicit, unassigned residual.
+
+The remaining heatmaps correlate the same per-model temporal medians and do
+not treat the correlated direct/derived predictors as independent causal
 experiments. In particular, \(\Sigma_*\)--\(\rho_*\) and
 \(\Omega\)--\(\kappa\) trends should be interpreted together.
+
+Neutral and ionized scale heights and speeds are reconstructed from the
+component masses, volumes, first moments, and second moments at each time;
+they are not averages of the six-phase diagnostics. The Whole row is measured
+directly from `whole.zprof`, so it includes UIM. The matrices include mean
+\(\Sigma_{\rm SFR,10}\) as the seventh x-axis predictor. The Whole volume RMS
+height is fixed by the common box geometry, so its rank correlation is
+undefined and appears as `--` rather than as a spurious zero correlation.
 
 The long-form CSV is the primary analysis product. It preserves the three
 velocity components and both magnetic components even when the standard

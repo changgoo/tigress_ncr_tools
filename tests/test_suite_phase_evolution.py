@@ -1,14 +1,22 @@
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import pytest
 
+import tigress_ncr_tools.plot_suite_phase_evolution as phase_module
 from tigress_ncr_tools.plot_suite_phase_evolution import (
+    FRACTION_FIELDS,
     PHASES,
     PHASE_PARAMETER_SPECS,
     PLOTTED_PHASE_SUMMARY_FIELDS,
     PROFILE_FIELDS,
+    aggregate_reduced_phase_time_series,
     phase_profile_moments,
     phase_parameter_correlations,
+    reduced_phase_fraction_summary,
     reduce_phase_zprof_snapshot,
+    reference_axis_limits,
     slab_overlap_weights,
 )
 
@@ -151,3 +159,112 @@ def test_phase_parameter_correlations_use_model_medians():
     )
     np.testing.assert_allclose(correlations["spearman_rho"], 1.0)
     assert np.all(correlations["model_count"] == 4)
+
+
+def test_reference_axis_limits_exclude_early_anomaly():
+    class Axis:
+        limits = None
+
+        def set_ylim(self, limits):
+            self.limits = limits
+
+    axis = Axis()
+    data = pd.DataFrame(
+        {"time": [0.0, 200.0, 400.0, 600.0], "value": [1.0e9, 1.0, 2.0, 4.0]}
+    )
+    phase_module._set_reference_ylim(
+        axis, data, ("value",), (200.0, 600.0), log=True
+    )
+    limits = axis.limits
+    assert limits[0] < 1.0
+    assert limits[1] > 4.0
+    assert limits[1] < 10.0
+    assert reference_axis_limits([np.nan, -1.0, 0.0], log=True) is None
+
+
+def test_reduced_phase_fraction_summary_sums_without_renormalizing(monkeypatch):
+    fractions = {
+        "cold": 0.10,
+        "unm": 0.10,
+        "wnm": 0.20,
+        "wim": 0.10,
+        "whim": 0.10,
+        "him": 0.10,
+    }
+    rows = []
+    for time, factor in ((400.0, 1.0), (500.0, 1.1)):
+        for phase, fraction in fractions.items():
+            row = {
+                "model": "model1",
+                "phase": phase,
+                "time": time,
+            }
+            for field in FRACTION_FIELDS:
+                row[field] = fraction * factor
+            rows.append(row)
+    monkeypatch.setattr(
+        phase_module,
+        "model_history_parameters",
+        lambda model: {
+            "stellar_surface_density": 40.0,
+            "stellar_scale_height": 200.0,
+            "stellar_midplane_density": 0.1,
+            "omega": 0.03,
+            "qshear": 1.0,
+        },
+    )
+    summary = reduced_phase_fraction_summary(
+        pd.DataFrame(rows), [(Path("model1"), 1.0e-3)], bounds=(400.0, 600.0)
+    ).set_index("phase")
+
+    assert summary.loc["neutral", "component_phases"] == "cold+unm+wnm"
+    assert summary.loc["ionized", "component_phases"] == "wim+whim+him"
+    assert summary.loc[
+        "neutral", "mass_fraction_box_time_median"
+    ] == pytest.approx(0.42)
+    assert summary.loc[
+        "ionized", "mass_fraction_box_time_median"
+    ] == pytest.approx(0.315)
+    assert (
+        summary.loc["neutral", "mass_fraction_box_time_median"]
+        + summary.loc["ionized", "mass_fraction_box_time_median"]
+        < 1.0
+    )
+
+
+def test_aggregate_reduced_phase_time_series_recombines_velocity_moments():
+    rows = []
+    for index, phase in enumerate(PHASES):
+        row = {
+            "model": "model1",
+            "dump": 1,
+            "time": 400.0,
+            "phase": phase.key,
+            "mean_sfr10": 1.0e-3,
+            "gas_scale_height_pc": 100.0,
+            "mass_scale_height_pc": 10.0 + index,
+            "volume_scale_height_pc": 20.0 + index,
+        }
+        for field in FRACTION_FIELDS:
+            row[field] = 0.1
+        for region in ("box", "hgas"):
+            row[f"mass_code_{region}"] = 1.0
+            row[f"volume_pc3_{region}"] = 2.0
+            for component in ("x1", "x2", "x3"):
+                row[f"mean_velocity_{component}_{region}"] = (
+                    float(index) if component == "x1" else 0.0
+                )
+                row[f"sigma_{component}_{region}"] = 1.0
+                row[f"alfven_mean_{component}_{region}"] = 2.0
+                row[f"alfven_perturbed_{component}_{region}"] = 3.0
+        rows.append(row)
+
+    combined = aggregate_reduced_phase_time_series(pd.DataFrame(rows))
+    neutral = combined.set_index("phase").loc["neutral"]
+    assert len(combined) == 2
+    assert neutral["mass_fraction_box"] == pytest.approx(0.3)
+    assert neutral["mass_code_box"] == pytest.approx(3.0)
+    assert neutral["mean_velocity_x1_box"] == pytest.approx(1.0)
+    assert neutral["sigma_x1_box"] == pytest.approx(np.sqrt(5.0 / 3.0))
+    assert neutral["sigma_3d_box"] == pytest.approx(np.sqrt(11.0 / 3.0))
+    assert neutral["alfven_mean_3d_box"] == pytest.approx(np.sqrt(12.0))
