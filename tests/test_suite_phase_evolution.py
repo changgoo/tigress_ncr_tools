@@ -45,6 +45,7 @@ def test_phase_profile_moments_subtract_bulk_flow_and_split_alfven_energy():
         "Ek1": np.asarray([4.0, 4.0]),
         "dEk2": np.asarray([9.0, 9.0]),
         "Ek3": np.asarray([16.0, 16.0]),
+        "P": np.asarray([6.0, 6.0]),
     }
     for component, mean_speed, perturbed_speed in (
         ("1", 1.0, 2.0),
@@ -66,6 +67,7 @@ def test_phase_profile_moments_subtract_bulk_flow_and_split_alfven_energy():
     assert result["sigma_x2"] == pytest.approx(3.0)
     assert result["sigma_x3"] == pytest.approx(4.0)
     assert result["sigma_3d"] == pytest.approx(np.sqrt(29.0))
+    assert result["sigma_eff_z"] == pytest.approx(np.sqrt(21.0))
     assert result["alfven_mean_3d"] == pytest.approx(3.0)
     assert result["alfven_perturbed_3d"] == pytest.approx(np.sqrt(5.0))
 
@@ -127,6 +129,7 @@ def test_reduce_phase_snapshot_uses_six_phase_mapping_and_preserves_uim_residual
     assert by_phase["cold"]["mass_fraction_box"] == pytest.approx(0.20)
     assert by_phase["wim"]["volume_fraction_hgas"] == pytest.approx(0.20)
     assert by_phase["unm"]["sigma_3d_box"] == pytest.approx(3.0)
+    assert by_phase["unm"]["sigma_eff_z_box"] == pytest.approx(np.sqrt(4.625))
     assert by_phase["unm"]["alfven_mean_3d_box"] == pytest.approx(np.sqrt(3.0))
     assert by_phase["unm"]["alfven_perturbed_3d_box"] == pytest.approx(np.sqrt(0.75))
     assert closure["selected_mass_fraction_box"] == pytest.approx(0.95)
@@ -268,6 +271,7 @@ def test_aggregate_reduced_phase_time_series_recombines_velocity_moments():
                 row[f"sigma_{component}_{region}"] = 1.0
                 row[f"alfven_mean_{component}_{region}"] = 2.0
                 row[f"alfven_perturbed_{component}_{region}"] = 3.0
+            row[f"sigma_eff_z_{region}"] = 4.0 + index
         rows.append(row)
 
     combined = aggregate_reduced_phase_time_series(pd.DataFrame(rows))
@@ -278,4 +282,5 @@ def test_aggregate_reduced_phase_time_series_recombines_velocity_moments():
     assert neutral["mean_velocity_x1_box"] == pytest.approx(1.0)
     assert neutral["sigma_x1_box"] == pytest.approx(np.sqrt(5.0 / 3.0))
     assert neutral["sigma_3d_box"] == pytest.approx(np.sqrt(11.0 / 3.0))
+    assert neutral["sigma_eff_z_box"] == pytest.approx(np.sqrt(77.0 / 3.0))
     assert neutral["alfven_mean_3d_box"] == pytest.approx(np.sqrt(12.0))

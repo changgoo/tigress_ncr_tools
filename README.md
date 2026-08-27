@@ -227,7 +227,9 @@ coefficients.
 `plot-suite-phases` combines the NCR phase z-profiles into CNM+CMM, UNM, WNM,
 WIM, WHIM, and HIM. It stores full temporal scatter for whole-box and
 within-`H_gas` mass/volume fractions, mass/volume RMS heights, component and
-3D velocity dispersions, and mean-field versus perturbed-field Alfvén speeds.
+3D velocity dispersions, PRFM effective vertical support speeds
+`sqrt(int(Pturb,z + Pth + Pi_B) dz / int(rho) dz)`, and mean-field versus
+perturbed-field Alfvén speeds.
 It also plots 400--600 Myr ensemble summaries against the four direct
 environmental inputs \(\Sigma_*,H_*,\Omega,q\) and the two derived predictors
 \(\kappa,\rho_*\), as well as the 200--600 Myr mean \(\Sigma_{\rm SFR,10}\).

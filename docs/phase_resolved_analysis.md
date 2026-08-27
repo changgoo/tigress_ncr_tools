@@ -95,7 +95,37 @@ Subtracting the phase mean makes this a dispersion rather than an RMS speed
 that includes coherent phase flow. Component means and dispersions, as well
 as the 3D result, remain in the time-series CSV.
 
-## 5. Mean and perturbed Alfvén speeds
+## 5. Effective vertical support speed
+
+The PRFM vertical dynamical-equilibrium diagnostic uses the total vertical
+stress
+
+\[
+P_{{\rm tot},z}=P_{{\rm turb},z}+P_{\rm th}+\Pi_B,
+\qquad
+\Pi_B=PB_1+PB_2-PB_3.
+\]
+
+Here `P_turb,z = 2*Ek3`, `P_th = P`, and `Pi_B` is the total Maxwell support,
+including both ordered and fluctuating fields. For phase \(p\) and either the
+whole-box or inner-slab weights \(w_j\), the effective vertical support speed is
+
+\[
+\sigma_{{\rm eff},z,p}=
+\left[
+\frac{\sum_j(2E_{k,3,p,j}+P_{p,j}+PB_{1,p,j}+PB_{2,p,j}-PB_{3,p,j})w_j}
+{\sum_jd_{p,j}w_j}
+\right]^{1/2}.
+\]
+
+This is the pressure-to-column-mass quantity used in PRFM vertical dynamical
+equilibrium. It is not the vertical turbulent dispersion: the kinetic term is
+the raw vertical Reynolds stress, without subtracting coherent vertical flow,
+and thermal and magnetic support are also included. Neutral and ionized values
+are reconstructed by adding the component-phase stress and mass integrals;
+the Whole value is measured directly from `whole.zprof`.
+
+## 6. Mean and perturbed Alfvén speeds
 
 The simulation defines `dB<i>` relative to the whole-horizontal mean field at
 each height. The reducer therefore obtains
@@ -120,7 +150,7 @@ values are component quadrature sums. These are phase magnetic-energy-to-mass
 diagnostics; they are not an average of the local ratio \(B/\sqrt\rho\).
 An empty phase/region is stored as `NaN`.
 
-## 6. Running and outputs
+## 7. Running and outputs
 
 ```bash
 plot-suite-phases /tigress/changgoo/anvil/TIGRESS-NCR-suite --workers 8
@@ -157,7 +187,8 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 - `phase_fraction_model_summary.png`: temporal medians and 16th--84th
   percentile ranges for mass/volume fractions in the box and inner slab;
 - `phase_structure_speed_model_summary.png`: the corresponding phase scale
-  heights, 3D velocity dispersions, and mean/perturbed Alfvén speeds;
+  heights, 3D velocity dispersions, effective vertical support speeds, and
+  mean/perturbed Alfvén speeds;
 - `phase_mass_fraction_box_parameter_relations.png`,
   `phase_volume_fraction_box_parameter_relations.png`,
   `phase_mass_fraction_hgas_parameter_relations.png`, and
@@ -171,7 +202,9 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
   `phase_volume_scale_height_pc_parameter_relations.png`: full scale-height
   scatter corresponding to the two scale-height matrix panels;
 - `phase_sigma_3d_box_parameter_relations.png`,
-  `phase_sigma_3d_hgas_parameter_relations.png`, and the four corresponding
+  `phase_sigma_3d_hgas_parameter_relations.png`,
+  `phase_sigma_eff_z_box_parameter_relations.png`,
+  `phase_sigma_eff_z_hgas_parameter_relations.png`, and the four corresponding
   `phase_alfven_{mean,perturbed}_3d_{box,hgas}_parameter_relations.png`
   products: full 32-model scatter with temporal 16th--84th percentile bars
   corresponding to every dynamics matrix panel;
@@ -183,11 +216,13 @@ the source data. The default directory `SUITE/phase_evolution_zprof/` contains:
 - whole-box and within-\(H_{\rm gas}\) fraction-evolution figures;
 - phase mass/volume scale-height evolution;
 - whole-box and inner-slab 3D velocity-dispersion evolution;
+- whole-box and inner-slab effective-vertical-support-speed evolution;
 - whole-box and inner-slab mean/perturbed Alfvén-speed evolution.
 
-Thus every fraction, scale-height, velocity-dispersion, and Alfvén diagnostic
-has a time-evolution view, a direct parameter-scatter view, and a correlation
-matrix view. Related time series remain grouped into compact evolution figures.
+Thus every fraction, scale-height, velocity-dispersion, effective-support, and
+Alfvén diagnostic has a time-evolution view, a direct parameter-scatter view,
+and a correlation matrix view. Related time series remain grouped into compact
+evolution figures.
 The ensemble-summary points are the 400--600 Myr temporal medians for each
 model and phase; their bars are the corresponding temporal 16th--84th
 percentiles. Black connecting symbols show the median across models only as a

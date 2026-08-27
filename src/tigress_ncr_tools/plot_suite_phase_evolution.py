@@ -75,6 +75,7 @@ PROFILE_FIELDS = (
     "Ek1",
     "dEk2",
     "Ek3",
+    "P",
     "PB1",
     "PB2",
     "PB3",
@@ -109,6 +110,8 @@ SUMMARY_FIELDS = (
     "sigma_x2_hgas",
     "sigma_x3_hgas",
     "sigma_3d_hgas",
+    "sigma_eff_z_box",
+    "sigma_eff_z_hgas",
     "alfven_mean_3d_box",
     "alfven_perturbed_3d_box",
     "alfven_mean_3d_hgas",
@@ -161,6 +164,8 @@ PHASE_SUMMARY_LABELS = {
     "volume_scale_height_pc": "volume RMS height",
     "sigma_3d_box": "sigma3D: box",
     "sigma_3d_hgas": "sigma3D: Hgas",
+    "sigma_eff_z_box": "sigma_eff,z: box",
+    "sigma_eff_z_hgas": "sigma_eff,z: Hgas",
     "alfven_mean_3d_box": "mean-field vA: box",
     "alfven_perturbed_3d_box": "perturbed vA: box",
     "alfven_mean_3d_hgas": "mean-field vA: Hgas",
@@ -180,6 +185,8 @@ SCALE_HEIGHT_CORRELATION_FIELDS = (
 DYNAMIC_CORRELATION_FIELDS = (
     "sigma_3d_box",
     "sigma_3d_hgas",
+    "sigma_eff_z_box",
+    "sigma_eff_z_hgas",
     "alfven_mean_3d_box",
     "alfven_mean_3d_hgas",
     "alfven_perturbed_3d_box",
@@ -288,6 +295,16 @@ def _energy_speed(energy, mass):
     return float(np.sqrt(2.0 * max(float(energy), 0.0) / mass))
 
 
+def _support_speed(support, mass):
+    """Return sqrt(integrated vertical support / integrated mass)."""
+    if mass <= 0.0:
+        return np.nan
+    scale = max(abs(float(support)), 1.0)
+    if support < -1.0e-10 * scale:
+        return np.nan
+    return float(np.sqrt(max(float(support), 0.0) / mass))
+
+
 def phase_profile_moments(values, weights, mean_field):
     """Return phase velocity and split Alfvén diagnostics in one z region.
 
@@ -331,6 +348,19 @@ def phase_profile_moments(values, weights, mean_field):
         if np.all(np.isfinite(velocity))
         else np.nan
     )
+    vertical_support = float(
+        np.sum(
+            (
+                2.0 * values["Ek3"]
+                + values["P"]
+                + values["PB1"]
+                + values["PB2"]
+                - values["PB3"]
+            )
+            * weights
+        )
+    )
+    result["sigma_eff_z"] = _support_speed(vertical_support, mass)
     result["alfven_mean_3d"] = (
         float(np.sqrt(np.sum(np.square(alfven_mean))))
         if np.all(np.isfinite(alfven_mean))
@@ -549,6 +579,16 @@ def _aggregate_phase_snapshot(snapshot, key, label, phase_keys):
                 if np.all(np.isfinite(values_3d))
                 else np.nan
             )
+        effective_speed = selected[f"sigma_eff_z_{region}"].to_numpy(dtype=float)
+        valid_effective = (
+            np.isfinite(mass) & (mass >= 0.0) & np.isfinite(effective_speed)
+        )
+        if np.all(valid_effective) and np.sum(mass) > 0.0:
+            row[f"sigma_eff_z_{region}"] = float(
+                np.sqrt(np.sum(mass * effective_speed**2) / np.sum(mass))
+            )
+        else:
+            row[f"sigma_eff_z_{region}"] = np.nan
     return row
 
 
@@ -1368,6 +1408,14 @@ def plot_phase_model_summaries(
             r"$\sigma_{\rm 3D}$ [km/s]",
         ),
         (
+            (("sigma_eff_z_box", "whole box", "o"),),
+            r"$\sigma_{{\rm eff},z}$ [km/s]",
+        ),
+        (
+            (("sigma_eff_z_hgas", r"$|z|\leq H_{\rm gas}$", "o"),),
+            r"$\sigma_{{\rm eff},z}$ [km/s]",
+        ),
+        (
             (
                 ("alfven_mean_3d_box", "mean field", "o"),
                 ("alfven_perturbed_3d_box", "perturbed field", "^"),
@@ -1387,10 +1435,12 @@ def plot_phase_model_summaries(
         "volume-weighted scale height",
         "velocity dispersion: whole box",
         r"velocity dispersion: $|z|\leq H_{\rm gas}$",
+        "effective vertical support speed: whole box",
+        r"effective vertical support speed: $|z|\leq H_{\rm gas}$",
         "Alfvén speeds: whole box",
         r"Alfvén speeds: $|z|\leq H_{\rm gas}$",
     )
-    figure, axes = plt.subplots(3, 2, figsize=(13.2, 13.0))
+    figure, axes = plt.subplots(4, 2, figsize=(13.2, 16.5))
     for axis, (series, ylabel), panel_title in zip(
         axes.flat, dynamic_specs, dynamic_titles
     ):
@@ -1816,6 +1866,16 @@ def render_suite_phase_evolution(
             ((f"sigma_3d_{region}", "-"),),
             ylabel=r"$\sigma_{\rm 3D}$ [km s$^{-1}$]",
             title=f"Phase velocity dispersion in {region_label}",
+            sfr_bounds=sfr_bounds,
+            dpi=dpi,
+        )
+        plot_phase_six_panel(
+            data,
+            ranked,
+            output_dir / f"phase_sigma_eff_z_{region}_evolution.png",
+            ((f"sigma_eff_z_{region}", "-"),),
+            ylabel=r"$\sigma_{{\rm eff},z}$ [km s$^{-1}$]",
+            title=f"Phase effective vertical support speed in {region_label}",
             sfr_bounds=sfr_bounds,
             dpi=dpi,
         )
