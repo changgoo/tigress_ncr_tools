@@ -12,7 +12,10 @@ import pandas as pd
 
 from pathena.proj2d_reader import read_proj2d
 
-from .correlation_parameters import ENVIRONMENT_PARAMETER_SPECS
+from .correlation_parameters import (
+    ENVIRONMENT_PARAMETER_SPECS,
+    parameter_axis_limits,
+)
 from .plot_suite_evolution import (
     DEFAULT_MODEL_GLOB,
     DEFAULT_SFR_RANGE,
@@ -1411,6 +1414,7 @@ def plot_spectrum_correlations(
         ENVIRONMENT_PARAMETER_SPECS
     ):
         x = summary[x_field].to_numpy(dtype=float)
+        x_limits = parameter_axis_limits(x, xscale)
         for row, (field, low_field, high_field, ylabel) in enumerate(y_specifications):
             axis = axes[row, column]
             median = summary[field].to_numpy(dtype=float)
@@ -1438,6 +1442,7 @@ def plot_spectrum_correlations(
             )
             if xscale == "log":
                 axis.set_xscale("log")
+            axis.set_xlim(x_limits)
             if row == 2:
                 axis.set_ylim(0.0, 1.0)
             if row == 3:

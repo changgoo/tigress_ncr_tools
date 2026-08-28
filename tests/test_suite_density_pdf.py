@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
+from tigress_ncr_tools.correlation_parameters import parameter_axis_limits
 from tigress_ncr_tools.plot_suite_density_pdf import (
     attach_velocity_summary,
     frame_density_pdf,
@@ -133,7 +135,7 @@ def test_pdf_summary_and_gaussian_grid_figures(tmp_path):
     assert grid_output.stat().st_size > 0
 
 
-def test_pdf_width_correlation_figure(tmp_path):
+def test_pdf_width_correlation_figure(monkeypatch, tmp_path):
     summary = pd.DataFrame(
         {
             "mean_sfr10": [1.0e-3, 1.0e-2],
@@ -152,8 +154,22 @@ def test_pdf_width_correlation_figure(tmp_path):
         }
     )
     output = tmp_path / "correlations.png"
-    plot_pdf_width_correlations(summary, output, dpi=40)
+    figures = []
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "tigress_ncr_tools.plot_suite_density_pdf.plt.close", figures.append
+        )
+        plot_pdf_width_correlations(summary, output, dpi=40)
     assert output.stat().st_size > 0
+    np.testing.assert_allclose(
+        figures[0].axes[0].get_xlim(),
+        parameter_axis_limits(summary["stellar_surface_density"], "log"),
+    )
+    np.testing.assert_allclose(
+        figures[0].axes[1].get_xlim(),
+        parameter_axis_limits(summary["stellar_scale_height"], "log"),
+    )
+    plt.close(figures[0])
 
 
 def test_velocity_summary_and_correlation_figure(monkeypatch, tmp_path):

@@ -1,5 +1,7 @@
 """Shared environmental predictors for suite correlation products."""
 
+import numpy as np
+
 
 ENVIRONMENT_PARAMETER_SPECS = (
     (
@@ -41,3 +43,24 @@ ENVIRONMENT_PARAMETER_SPECS = (
         "log",
     ),
 )
+
+
+def parameter_axis_limits(values, scale, margin=0.05):
+    """Return data-only limits with symmetric padding in plotting space."""
+    values = np.asarray(values, dtype=float)
+    valid = np.isfinite(values)
+    if scale == "log":
+        valid &= values > 0.0
+    values = values[valid]
+    if values.size == 0:
+        raise ValueError("parameter axis requires at least one valid value")
+    if scale == "log":
+        values = np.log10(values)
+    lower = float(np.min(values))
+    upper = float(np.max(values))
+    span = upper - lower
+    padding = margin * span if span > 0.0 else max(abs(lower) * margin, margin)
+    limits = (lower - padding, upper + padding)
+    if scale == "log":
+        return tuple(10.0**limit for limit in limits)
+    return limits
