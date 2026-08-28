@@ -152,10 +152,18 @@ plot-suite-tracer-correlations \
 
 The command aligns models and averaging intervals by name, displays both
 horizontal and vertical 16th--84th percentile temporal ranges, and annotates
-the model-by-model Spearman coefficient. It writes
+the model-by-model Spearman coefficient. It also computes the correlation of
+every gas, H I, and EM diagnostic with \(\Sigma_*\), \(H_*\), \(\Omega\),
+\(q\), \(\kappa\), \(\rho_*\), and mean \(\Sigma_{\rm SFR}\). It writes
 `SUITE/tracer_correlations_theta0/tracer_pdf_width_correlations.png`,
 `tracer_power_spectrum_correlations.png`, and
-`tracer_correlation_coefficients.csv`.
+`tracer_correlation_coefficients.csv`, together with
+`tracer_pdf_width_parameter_correlation_matrix.png`,
+`tracer_power_spectrum_parameter_correlation_matrix.png`, and the exact
+coefficients in `tracer_parameter_correlation_coefficients.csv`. The spectrum
+matrix uses \(L_{\rm in}\), \(\alpha\), and \(A_2\); axial \(\phi_2\) remains
+in the scatter grids but is omitted from an ordinary Spearman matrix because
+its \(180^\circ\) wrap makes linear ranks coordinate-dependent.
 
 For all 32 models, gas and H I remain closely coupled:
 

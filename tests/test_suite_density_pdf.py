@@ -137,6 +137,10 @@ def test_pdf_width_correlation_figure(tmp_path):
     summary = pd.DataFrame(
         {
             "mean_sfr10": [1.0e-3, 1.0e-2],
+            "stellar_surface_density": [20.0, 80.0],
+            "stellar_scale_height": [100.0, 400.0],
+            "omega": [0.02, 0.04],
+            "qshear": [0.7, 1.2],
             "kappa": [0.03, 0.06],
             "stellar_midplane_density": [0.02, 0.08],
             "std_delta_time_median": [1.2, 1.8],

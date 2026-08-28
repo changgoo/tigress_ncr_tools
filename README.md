@@ -153,8 +153,8 @@ derivation, and archive-field inventory are documented in
 The default output directory is `SUITE/density_power_spectrum_theta0/`. It
 contains the complete `P_delta(t,k)` archive, a `t=200--600` mean-spectrum
 comparison, an integral-scale/spectral-slope CSV, four two-panel SFR relation
-figures, a 4-by-3 correlation figure, the exact model/SFR/color key, and—with
-`--movie`—the 601-frame spectrum evolution and MP4. The slope fits
+figures, a 4-by-7 parameter-relation figure, the exact model/SFR/color key,
+and—with `--movie`—the 601-frame spectrum evolution and MP4. The slope fits
 `P_delta proportional to k^-alpha`
 over the fixed band `64 pc < 2*pi/k < 256 pc`. Scatter colors use `plasma`,
 `viridis`, `cividis`, and `magma` for SFR, orbital frequency, stellar midplane
@@ -166,11 +166,12 @@ physical wavelength `lambda=2*pi/k` in pc on the upper axis.
 every 1-Myr spectrum. The angle-averaged figure shows mean power and median
 `A2=abs(Q2)` rather than the former dimensionless-power panel. Relation
 figures show the 200--600 Myr temporal median with 16th--84th percentile bars.
-The 4-by-3 figure compares `L_in`, `alpha`, `A2`, and axial angle `phi2` with
+The 4-by-7 figure compares `L_in`, `alpha`, `A2`, and axial angle `phi2` with
+the four input parameters (`Sigma_star`, `H_star`, `Omega`, and `q`),
 epicyclic frequency `kappa=sqrt(2*(2-q))*Omega`, stellar midplane density, and
-mean SFR. The
-archive also stores the temporal mean and standard deviation, the full time
-series, and the older diagnostics measured from the mean spectrum.
+mean SFR. The archive also stores the temporal mean and standard deviation,
+the full time series, and the older diagnostics measured from the mean
+spectrum.
 
 ```bash
 plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite --movie
@@ -185,9 +186,10 @@ plot-suite-density-spectrum /tigress/changgoo/anvil/TIGRESS-NCR-suite \
 `plot-suite-density-pdf` measures area-weighted one-point PDFs of
 `delta=Sigma/<Sigma>-1` and `s=ln(Sigma/<Sigma>)` for every clean 1-Myr theta0
 map. It stores instantaneous pixel standard deviations and summarizes them
-over 200--600 Myr with medians and 16th--84th percentile bars. A 2-by-3 figure
-correlates both widths with epicyclic frequency, stellar midplane density, and
-mean SFR. A companion 2-by-7 figure compares the same widths with the three
+over 200--600 Myr with medians and 16th--84th percentile bars. A 2-by-7 figure
+correlates both widths with the four input parameters, epicyclic frequency,
+stellar midplane density, and mean SFR. A companion 2-by-7 figure compares the
+same widths with the three
 mass-weighted kinetic dispersions, thermal speed, and three Alfvén speeds from
 the whole-domain histories, using 200--600 Myr medians and percentile bars.
 A separate 2-by-4 panel compares both PDF widths with the 3D turbulent and
@@ -219,8 +221,8 @@ cells below a chosen neutral-fraction threshold.
 
 After all three tracer summaries exist, `plot-suite-tracer-correlations`
 compares gas, H I, and EM PDF widths and the \(L_{\rm in}\), \(\alpha\), and
-\(A_2\) spectrum diagnostics, including temporal ranges and pairwise Spearman
-coefficients.
+\(A_2\) spectrum diagnostics, including temporal ranges, pairwise Spearman
+coefficients, and annotated tracer-by-parameter correlation matrices.
 
 ## Six-phase zprof diagnostics
 

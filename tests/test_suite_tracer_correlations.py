@@ -11,6 +11,7 @@ from tigress_ncr_tools.plot_suite_tracer_correlations import (
     SPECTRUM_METRICS,
     TRACERS,
     load_tracer_summaries,
+    parameter_correlation_table,
     render_suite_tracer_correlations,
     tracer_correlation_table,
 )
@@ -27,6 +28,12 @@ def _write_tracer_summaries(suite):
             row = {
                 "model": model,
                 "mean_sfr10": mean_sfr,
+                "stellar_surface_density": 10.0 * model_index,
+                "stellar_scale_height": 100.0 * model_index,
+                "omega": 0.01 * model_index,
+                "qshear": 0.5 * model_index,
+                "kappa": 0.015 * model_index,
+                "stellar_midplane_density": 0.05 * model_index,
                 "average_start": 200.0,
                 "average_stop": 600.0,
             }
@@ -55,6 +62,17 @@ def test_tracer_summaries_align_and_correlate(tmp_path):
         summaries, PDF_METRICS, "pdf"
     )
     np.testing.assert_allclose(correlations["spearman_rho"], 1.0)
+    parameter_correlations = parameter_correlation_table(
+        summaries, PDF_METRICS, "pdf"
+    )
+    assert len(parameter_correlations) == 42
+    sfr_rows = parameter_correlations["parameter"] == "mean_sfr10"
+    np.testing.assert_allclose(
+        parameter_correlations.loc[~sfr_rows, "spearman_rho"], 1.0
+    )
+    np.testing.assert_allclose(
+        parameter_correlations.loc[sfr_rows, "spearman_rho"], 0.5
+    )
 
 
 def test_render_suite_tracer_correlations(tmp_path):
@@ -63,6 +81,19 @@ def test_render_suite_tracer_correlations(tmp_path):
     render_suite_tracer_correlations(tmp_path, output_dir=output, dpi=40)
     assert (output / "tracer_pdf_width_correlations.png").is_file()
     assert (output / "tracer_power_spectrum_correlations.png").is_file()
+    assert (
+        output / "tracer_pdf_width_parameter_correlation_matrix.png"
+    ).is_file()
+    assert (
+        output / "tracer_power_spectrum_parameter_correlation_matrix.png"
+    ).is_file()
     table = pd.read_csv(output / "tracer_correlation_coefficients.csv")
     assert len(table) == 15
     np.testing.assert_allclose(table["spearman_rho"], 1.0)
+    parameter_table = pd.read_csv(
+        output / "tracer_parameter_correlation_coefficients.csv"
+    )
+    assert len(parameter_table) == 105
+    sfr_rows = parameter_table["parameter"] == "mean_sfr10"
+    np.testing.assert_allclose(parameter_table.loc[~sfr_rows, "spearman_rho"], 1.0)
+    np.testing.assert_allclose(parameter_table.loc[sfr_rows, "spearman_rho"], 0.5)

@@ -65,8 +65,9 @@ time-median \(s\)-PDF described in Section 3. For a skewed or multimodal PDF,
 there is no reason for that overlay width to equal the temporal median of the
 instantaneous direct widths.
 
-The 2-by-3 correlation figure places \(\sigma_\delta\) and \(\sigma_s\) in its
-two rows and uses the following three horizontal variables:
+The 2-by-7 correlation figure places \(\sigma_\delta\) and \(\sigma_s\) in its
+two rows. Its columns are the four input parameters
+\(\Sigma_*\), \(H_*\), \(\Omega\), and \(q\), followed by
 
 \[
 \kappa \equiv \sqrt{2(2-q)}\,\Omega,
@@ -167,13 +168,15 @@ archive, `density_pdfs.npz`, includes:
 - temporal summaries of `sigma_3d`, `alfven_3d`, `plasma_beta`, `mach_3d`, and
   `mach_mhd`, along with scalar text fields recording their definitions;
 - pointwise temporal PDF quantiles and the fitted Gaussian curves;
-- \(\Omega\), \(\kappa\), \(\rho_*\), and \(q\) for each model.
+- \(\Sigma_*\), \(H_*\), \(\Omega\), \(q\), \(\kappa\), \(\rho_*\), and
+  mean \(\Sigma_{\rm SFR}\) for each model.
 
 The directory also contains:
 
 - `density_pdf_widths.csv`: one row per clean model with width summaries,
   parameters, Gaussian moments, and averaging bounds;
-- `density_pdf_widths_correlations.png`: the 2-by-3 width correlation figure;
+- `density_pdf_widths_correlations.png`: the 2-by-7 width parameter-relation
+  figure; the H I and EM runs write the corresponding slug-prefixed products;
 - `density_pdf_widths_velocity_correlations.png`: the 2-by-7 comparison with
   three kinetic dispersions, thermal speed, and three Alfvén speeds;
 - `density_pdf_widths_derived_velocity_correlations.png`: the 2-by-4 comparison

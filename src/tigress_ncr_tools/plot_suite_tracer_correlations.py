@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .correlation_parameters import ENVIRONMENT_PARAMETER_SPECS
 from .plot_suite_density_spectrum import _atomic_csv
 from .plot_suite_hst_evolution import sfr_colormap
 
@@ -136,6 +137,13 @@ def load_tracer_summaries(suite, family):
             reference["mean_sfr10"], frame["mean_sfr10"], rtol=1e-10
         ):
             raise ValueError(f"{tracer.label} {family} SFR values differ from gas")
+        for field, _, _, _ in ENVIRONMENT_PARAMETER_SPECS:
+            if field == "mean_sfr10":
+                continue
+            if not np.allclose(reference[field], frame[field], rtol=1e-10):
+                raise ValueError(
+                    f"{tracer.label} {family} {field} values differ from gas"
+                )
         for bound in ("average_start", "average_stop"):
             if bound in reference and bound in frame and not np.allclose(
                 reference[bound], frame[bound]
@@ -175,6 +183,96 @@ def tracer_correlation_table(summaries, metrics, family):
                 }
             )
     return pd.DataFrame(rows)
+
+
+def parameter_correlation_table(summaries, metrics, family):
+    """Return tracer-diagnostic Spearman coefficients for every predictor."""
+    rows = []
+    for tracer in TRACERS:
+        frame = summaries[tracer.key]
+        for metric in metrics:
+            y = frame[metric.median].to_numpy(dtype=float)
+            for parameter, parameter_label, _, _ in ENVIRONMENT_PARAMETER_SPECS:
+                coefficient, count = _spearman(
+                    frame[parameter].to_numpy(dtype=float), y
+                )
+                rows.append(
+                    {
+                        "family": family,
+                        "tracer": tracer.key,
+                        "tracer_label": tracer.label,
+                        "metric": metric.key,
+                        "metric_label": metric.label,
+                        "parameter": parameter,
+                        "parameter_label": parameter_label,
+                        "spearman_rho": coefficient,
+                        "model_count": count,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def plot_parameter_correlation_matrix(
+    correlations,
+    metrics,
+    output,
+    *,
+    title,
+    dpi=180,
+):
+    """Plot an annotated tracer/diagnostic-by-parameter Spearman matrix."""
+    parameter_names = [item[0] for item in ENVIRONMENT_PARAMETER_SPECS]
+    parameter_labels = [item[1] for item in ENVIRONMENT_PARAMETER_SPECS]
+    row_specs = [(tracer, metric) for tracer in TRACERS for metric in metrics]
+    matrix = np.full((len(row_specs), len(parameter_names)), np.nan)
+    for row, (tracer, metric) in enumerate(row_specs):
+        for column, parameter in enumerate(parameter_names):
+            match = correlations[
+                (correlations["tracer"] == tracer.key)
+                & (correlations["metric"] == metric.key)
+                & (correlations["parameter"] == parameter)
+            ]
+            if len(match) == 1:
+                matrix[row, column] = match["spearman_rho"].iloc[0]
+
+    height = max(5.0, 0.62 * len(row_specs) + 1.8)
+    figure, axis = plt.subplots(figsize=(10.8, height))
+    image = axis.imshow(
+        matrix,
+        cmap="RdBu_r",
+        vmin=-1.0,
+        vmax=1.0,
+        aspect="auto",
+        interpolation="nearest",
+    )
+    axis.set_xticks(np.arange(len(parameter_labels)), parameter_labels)
+    axis.set_yticks(
+        np.arange(len(row_specs)),
+        [f"{tracer.label}: {metric.label}" for tracer, metric in row_specs],
+    )
+    axis.tick_params(top=True, labeltop=True, bottom=False, labelbottom=False)
+    for row, column in np.ndindex(matrix.shape):
+        value = matrix[row, column]
+        axis.text(
+            column,
+            row,
+            "--" if not np.isfinite(value) else f"{value:+.2f}",
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color=(
+                "0.45"
+                if not np.isfinite(value)
+                else "white" if abs(value) > 0.55 else "black"
+            ),
+        )
+    colorbar = figure.colorbar(image, ax=axis, pad=0.025, fraction=0.045)
+    colorbar.set_label(r"Spearman $\rho_s$ across models")
+    figure.suptitle(title, fontsize=14, y=0.985)
+    figure.subplots_adjust(left=0.23, right=0.91, bottom=0.07, top=0.86)
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
 
 
 def _axis_limits(x_low, x_high, y_low, y_high, log):
@@ -331,12 +429,27 @@ def render_suite_tracer_correlations(
     spectrum_correlations = tracer_correlation_table(
         spectrum, SPECTRUM_METRICS, "spectrum"
     )
+    pdf_parameter_correlations = parameter_correlation_table(
+        pdf, PDF_METRICS, "pdf"
+    )
+    spectrum_parameter_correlations = parameter_correlation_table(
+        spectrum, SPECTRUM_METRICS, "spectrum"
+    )
     correlation_path = output_dir / "tracer_correlation_coefficients.csv"
     _atomic_csv(
         pd.concat((pdf_correlations, spectrum_correlations), ignore_index=True),
         correlation_path,
     )
     print(f"Wrote {correlation_path}", flush=True)
+    parameter_path = output_dir / "tracer_parameter_correlation_coefficients.csv"
+    _atomic_csv(
+        pd.concat(
+            (pdf_parameter_correlations, spectrum_parameter_correlations),
+            ignore_index=True,
+        ),
+        parameter_path,
+    )
+    print(f"Wrote {parameter_path}", flush=True)
     _plot_tracer_grid(
         pdf,
         PDF_METRICS,
@@ -358,6 +471,24 @@ def render_suite_tracer_correlations(
         title=(
             "Projected-tracer power-spectrum diagnostics: 200--600 Myr "
             "temporal medians and 16th--84th percentiles"
+        ),
+        dpi=dpi,
+    )
+    plot_parameter_correlation_matrix(
+        pdf_parameter_correlations,
+        PDF_METRICS,
+        output_dir / "tracer_pdf_width_parameter_correlation_matrix.png",
+        title=(
+            "Total-gas, H I, and EM PDF-width correlations with suite parameters"
+        ),
+        dpi=dpi,
+    )
+    plot_parameter_correlation_matrix(
+        spectrum_parameter_correlations,
+        SPECTRUM_METRICS,
+        output_dir / "tracer_power_spectrum_parameter_correlation_matrix.png",
+        title=(
+            "Total-gas, H I, and EM power-spectrum correlations with suite parameters"
         ),
         dpi=dpi,
     )

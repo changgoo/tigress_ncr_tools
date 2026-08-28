@@ -12,6 +12,7 @@ import pandas as pd
 
 from pathena.proj2d_reader import read_proj2d
 
+from .correlation_parameters import ENVIRONMENT_PARAMETER_SPECS
 from .plot_suite_evolution import (
     DEFAULT_MODEL_GLOB,
     DEFAULT_SFR_RANGE,
@@ -1368,22 +1369,12 @@ def _plot_percentile_points(
     )
 
 
-def plot_spectrum_correlations(summary, output, *, dpi=180):
-    """Plot spectrum diagnostics against kappa, stellar density, and SFR."""
+def plot_spectrum_correlations(
+    summary, output, *, quantity_label="Gas column", dpi=180
+):
+    """Plot spectrum diagnostics against primary and derived predictors."""
     color_values = summary["mean_sfr10"].to_numpy(dtype=float)
     cmap, norm = sfr_colormap(color_values, "plasma", "log")
-    x_specifications = (
-        ("kappa", r"$\kappa=\sqrt{2(2-q)}\,\Omega\ [{\rm Myr}^{-1}]$"),
-        (
-            "stellar_midplane_density",
-            r"$\rho_*=\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
-        ),
-        (
-            "mean_sfr10",
-            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
-            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
-        ),
-    )
     y_specifications = (
         (
             "integral_scale_time_median_pc",
@@ -1410,8 +1401,15 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
             r"$\phi_{2,64-256}\ [{\rm deg}]$",
         ),
     )
-    fig, axes = plt.subplots(4, 3, figsize=(14.2, 14.2), sharex="col")
-    for column, (x_field, xlabel) in enumerate(x_specifications):
+    fig, axes = plt.subplots(
+        4,
+        len(ENVIRONMENT_PARAMETER_SPECS),
+        figsize=(22.5, 14.2),
+        sharex="col",
+    )
+    for column, (x_field, _, xlabel, xscale) in enumerate(
+        ENVIRONMENT_PARAMETER_SPECS
+    ):
         x = summary[x_field].to_numpy(dtype=float)
         for row, (field, low_field, high_field, ylabel) in enumerate(y_specifications):
             axis = axes[row, column]
@@ -1420,13 +1418,14 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
             percentile84 = summary[high_field].to_numpy(dtype=float)
             valid = (
                 np.isfinite(x)
-                & (x > 0.0)
                 & np.isfinite(median)
                 & np.isfinite(percentile16)
                 & np.isfinite(percentile84)
                 & (percentile16 <= median)
                 & (median <= percentile84)
             )
+            if xscale == "log":
+                valid &= x > 0.0
             _plot_percentile_points(
                 axis,
                 x[valid],
@@ -1437,7 +1436,8 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
                 cmap,
                 norm,
             )
-            axis.set_xscale("log")
+            if xscale == "log":
+                axis.set_xscale("log")
             if row == 2:
                 axis.set_ylim(0.0, 1.0)
             if row == 3:
@@ -1451,12 +1451,12 @@ def plot_spectrum_correlations(summary, output, *, dpi=180):
     colorbar = fig.colorbar(scalar, cax=color_axis, orientation="horizontal")
     colorbar.set_label(DIAGNOSTIC_COLOR_SPECS[0][3])
     fig.suptitle(
-        "Gas-column spectrum and 64--256 pc quadrupole correlations: "
+        f"{quantity_label} power-spectrum and 64--256 pc quadrupole relations: "
         "200--600 Myr temporal summaries",
         fontsize=13,
     )
     fig.subplots_adjust(
-        left=0.075, right=0.985, bottom=0.14, top=0.94, hspace=0.26, wspace=0.22
+        left=0.045, right=0.995, bottom=0.14, top=0.94, hspace=0.26, wspace=0.25
     )
     fig.savefig(output, dpi=dpi, facecolor="white")
     plt.close(fig)
@@ -1826,6 +1826,7 @@ def render_suite_density_spectrum(
     plot_spectrum_correlations(
         diagnostic_summary,
         output_dir / f"{correlation_name}.png",
+        quantity_label=quantity_spec.label.capitalize(),
         dpi=dpi,
     )
     if movie:

@@ -13,6 +13,7 @@ import pandas as pd
 from pathena.hst_reader import read_hst
 from pathena.proj2d_reader import read_proj2d
 
+from .correlation_parameters import ENVIRONMENT_PARAMETER_SPECS
 from .plot_suite_density_spectrum import (
     EXCLUDED_MODELS,
     _atomic_csv,
@@ -398,21 +399,9 @@ def pdf_display_limits(centers, density, floor=DEFAULT_PDF_DISPLAY_FLOOR):
 def plot_pdf_width_correlations(
     summary, output, *, quantity_label="Gas column", dpi=180
 ):
-    """Plot delta and s standard deviations against kappa, rho-star, and SFR."""
+    """Plot PDF widths against the primary and derived suite predictors."""
     color_values = summary["mean_sfr10"].to_numpy(dtype=float)
     cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
-    x_specs = (
-        ("kappa", r"$\kappa=\sqrt{2(2-q)}\,\Omega\ [{\rm Myr}^{-1}]$"),
-        (
-            "stellar_midplane_density",
-            r"$\rho_*=\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
-        ),
-        (
-            "mean_sfr10",
-            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
-            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
-        ),
-    )
     y_specs = (
         (
             "std_delta_time_median",
@@ -427,8 +416,15 @@ def plot_pdf_width_correlations(
             r"$\sigma_s$",
         ),
     )
-    fig, axes = plt.subplots(2, 3, figsize=(14.2, 8.2), sharex="col")
-    for column, (x_field, xlabel) in enumerate(x_specs):
+    fig, axes = plt.subplots(
+        2,
+        len(ENVIRONMENT_PARAMETER_SPECS),
+        figsize=(22.5, 8.2),
+        sharex="col",
+    )
+    for column, (x_field, _, xlabel, xscale) in enumerate(
+        ENVIRONMENT_PARAMETER_SPECS
+    ):
         x = summary[x_field].to_numpy(dtype=float)
         for row, (field, low_field, high_field, ylabel) in enumerate(y_specs):
             axis = axes[row, column]
@@ -437,11 +433,12 @@ def plot_pdf_width_correlations(
             high = summary[high_field].to_numpy(dtype=float)
             valid = (
                 np.isfinite(x)
-                & (x > 0.0)
                 & np.isfinite(median)
                 & np.isfinite(low)
                 & np.isfinite(high)
             )
+            if xscale == "log":
+                valid &= x > 0.0
             _plot_percentile_points(
                 axis,
                 x[valid],
@@ -452,7 +449,8 @@ def plot_pdf_width_correlations(
                 cmap,
                 norm,
             )
-            axis.set_xscale("log")
+            if xscale == "log":
+                axis.set_xscale("log")
             if row == 1:
                 axis.set_xlabel(xlabel)
             if column == 0:
@@ -471,7 +469,7 @@ def plot_pdf_width_correlations(
         fontsize=13,
     )
     fig.subplots_adjust(
-        left=0.075, right=0.985, bottom=0.22, top=0.92, hspace=0.28, wspace=0.22
+        left=0.045, right=0.995, bottom=0.22, top=0.92, hspace=0.28, wspace=0.25
     )
     fig.savefig(output, dpi=dpi, facecolor="white")
     plt.close(fig)

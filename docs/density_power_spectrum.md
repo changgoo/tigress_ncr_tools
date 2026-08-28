@@ -328,7 +328,9 @@ standard deviation are also retained in the archive and CSV, but they are not
 used as the primary plotted summary. The accepted-sample count is recorded for
 each statistic.
 
-The epicyclic frequency used by the correlation figure is
+The correlation figure uses the four input parameters \(\Sigma_*\), \(H_*\),
+\(\Omega\), and \(q\), plus mean \(\Sigma_{\rm SFR}\), stellar midplane
+density, and the epicyclic frequency
 
 \[
 \kappa \equiv \sqrt{2(2-q)}\,\Omega.
@@ -452,8 +454,9 @@ The default output directory is
 - The same two-panel scatter figure with `_color_by_omega`,
   `_color_by_stellar_midplane_density`, and `_color_by_qshear` suffixes,
   using `viridis`, `cividis`, and `magma`, respectively.
-- `density_power_spectrum_correlations.png`: one 4-by-3 figure with rows for
-  \(L_{\rm in}\), \(\alpha\), band \(A_2\), and band \(\phi_2\), and columns for \(\kappa\),
+- `density_power_spectrum_correlations.png`: one 4-by-7 figure with rows for
+  \(L_{\rm in}\), \(\alpha\), band \(A_2\), and band \(\phi_2\), and columns for
+  \(\Sigma_*\), \(H_*\), \(\Omega\), \(q\), \(\kappa\),
   \(\rho_*=\Sigma_*/(2H_*)\), and mean \(\Sigma_{\rm SFR}\). Points and bars
   use medians for \(L_{\rm in}\), \(\alpha\), and \(A_2\), an axial circular
   mean for \(\phi_2\), and 16th--84th percentile bars. Colors show mean SFR
