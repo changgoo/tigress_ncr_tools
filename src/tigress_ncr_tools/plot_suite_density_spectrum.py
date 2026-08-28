@@ -51,7 +51,7 @@ DEFAULT_ARCHIVE_NAME = "density_power_spectra.npz"
 DEFAULT_CMAP = "plasma"
 DEFAULT_K_BINS = 40
 DEFAULT_TIME_RANGE = (0, 600)
-EXCLUDED_MODELS = frozenset({"R8_8pc_NCR_row0000"})
+EXCLUDED_MODELS = frozenset()
 DEFAULT_DIAGNOSTIC_NAME = "density_power_spectrum_integral_scale_slope"
 DEFAULT_CORRELATION_NAME = "density_power_spectrum_correlations"
 DEFAULT_POWER2D_MEAN_ARCHIVE = "density_power_2d_time_mean.npz"
@@ -954,7 +954,7 @@ def spectral_slope_alpha(k, power, wavelength_bounds=DEFAULT_SPECTRAL_BAND_PC):
 
 
 def exclude_corrupted_archive_models(data, excluded=EXCLUDED_MODELS):
-    """Return an archive copy with excluded models removed on the model axis."""
+    """Return an archive copy with explicitly excluded models removed."""
     names = np.asarray(data["model"]).astype(str)
     keep = np.asarray([name not in excluded for name in names], dtype=bool)
     removed = tuple(names[~keep])

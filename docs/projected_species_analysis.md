@@ -29,9 +29,9 @@ and therefore are not applied before the PDF or FFT. The native mean remains in
 the archives as `mean_sigma_code`; `field`, `quantity`, and
 `projected_physical_unit` identify its interpretation.
 
-As in the total-gas analysis, corrupted projection model
-`R8_8pc_NCR_row0000` is excluded. The comparison contains the same clean 31
-models, ranked and colored by mean `sfr10` over 200--600 Myr.
+As in the total-gas analysis, the regenerated `R8_8pc_NCR_row0000` projection
+sequence is included. The comparison contains all 32 models, ranked and
+colored by mean `sfr10` over 200--600 Myr.
 
 ## 2. PDFs
 
@@ -157,20 +157,20 @@ the model-by-model Spearman coefficient. It writes
 `tracer_power_spectrum_correlations.png`, and
 `tracer_correlation_coefficients.csv`.
 
-For the 31 clean models, gas and H I are closely coupled:
+For all 32 models, gas and H I remain closely coupled:
 
 | diagnostic | gas--H I \(\rho_s\) |
 |---|---:|
-| \(\sigma_\delta\) | 0.975 |
-| \(\sigma_s\) | 0.969 |
-| \(L_{\rm in}\) | 0.914 |
-| \(\alpha\) | 0.752 |
+| \(\sigma_\delta\) | 0.976 |
+| \(\sigma_s\) | 0.968 |
+| \(L_{\rm in}\) | 0.907 |
+| \(\alpha\) | 0.704 |
 | \(A_2\) | 0.992 |
 
 EM is much less correlated with either gas or H I. Gas--EM coefficients are
-0.22 and 0.17 for the two PDF widths and \(-0.07\), 0.18, and 0.28 for
+0.23 and 0.16 for the two PDF widths and \(-0.07\), 0.15, and 0.27 for
 \(L_{\rm in}\), \(\alpha\), and \(A_2\), respectively. The largest EM pairing
-is H I--EM \(\alpha\), with \(\rho_s=0.48\). This is consistent with EM
+is H I--EM \(\alpha\), with \(\rho_s=0.484\). This is consistent with EM
 emphasizing compact ionized structures rather than the predominantly neutral
 column morphology. The H I \(\sigma_s\) comparison retains the low-column
 sensitivity documented above.

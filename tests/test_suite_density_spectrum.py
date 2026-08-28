@@ -183,7 +183,7 @@ def test_diagnostics_are_measured_for_every_instantaneous_spectrum():
     assert np.all(diagnostics["slope_fit_bin_count_time"] >= 3)
 
 
-def test_corrupted_row0000_is_removed_from_every_model_axis():
+def test_repaired_row0000_is_preserved_by_default():
     data = {
         "model": np.array(["row0001", "R8_8pc_NCR_row0000", "row0002"]),
         "power_delta": np.arange(12).reshape(3, 2, 2),
@@ -191,7 +191,25 @@ def test_corrupted_row0000_is_removed_from_every_model_axis():
         "k_centers": np.array([0.1, 0.2]),
     }
     filtered, removed = exclude_corrupted_archive_models(data)
-    assert removed == ("R8_8pc_NCR_row0000",)
+    assert removed == ()
+    assert filtered["model"].tolist() == [
+        "row0001", "R8_8pc_NCR_row0000", "row0002",
+    ]
+    assert filtered["power_delta"].shape == (3, 2, 2)
+    np.testing.assert_array_equal(filtered["k_centers"], data["k_centers"])
+
+
+def test_explicit_archive_exclusion_filters_every_model_axis():
+    data = {
+        "model": np.array(["row0001", "bad-model", "row0002"]),
+        "power_delta": np.arange(12).reshape(3, 2, 2),
+        "qshear": np.array([0.5, 1.0, 1.5]),
+        "k_centers": np.array([0.1, 0.2]),
+    }
+    filtered, removed = exclude_corrupted_archive_models(
+        data, excluded={"bad-model"}
+    )
+    assert removed == ("bad-model",)
     assert filtered["model"].tolist() == ["row0001", "row0002"]
     assert filtered["power_delta"].shape == (2, 2, 2)
     np.testing.assert_array_equal(filtered["k_centers"], data["k_centers"])

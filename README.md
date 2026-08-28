@@ -125,13 +125,13 @@ With `--movie`, the command uses the same ffmpeg workflow and defaults as
 
 ## Suite density power spectra
 
-`plot-suite-density-spectrum` analyzes the clean 31-model theta0 sequence using
+`plot-suite-density-spectrum` analyzes the complete 32-model theta0 sequence using
 `delta = Sigma/<Sigma> - 1`. It first remaps each map to periodic shearing
 coordinates, then assigns each Fourier mode its instantaneous physical
 wavenumber with `kx = kx0 + q*Omega*t_remap*ky`. Runtime `problem/qshear` and
 `problem/Omega` batch-script overrides take precedence over the athinput
-template values. Corrupted `R8_8pc_NCR_row0000` projections are excluded from
-the archive and every derived product.
+template values. The regenerated `R8_8pc_NCR_row0000` projection sequence is
+included in the archive and every derived product.
 
 The transform is now a two-stage pipeline. Each model first stores its complete
 601-snapshot 2D periodogram series under
