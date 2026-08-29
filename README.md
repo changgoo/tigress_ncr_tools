@@ -194,7 +194,10 @@ mass-weighted kinetic dispersions, thermal speed, and three Alfvén speeds from
 the whole-domain histories, using 200--600 Myr medians and percentile bars.
 A separate 2-by-4 panel compares both PDF widths with the 3D turbulent and
 Alfvén speeds, the turbulent Mach number, and its magnetic-pressure-corrected
-form.
+form. When the phase summary exists, four 2-by-9 figures add whole-box and
+inner-slab phase \(\sigma_{\rm 3D}\) and \(\sigma_{{\rm eff},z}\) relations.
+Every PDF-width correlation family has a long-form coefficient table and an
+annotated Spearman heatmap.
 
 The output directory `SUITE/density_pdf_theta0/` also contains all-model median
 PDFs and a 4-by-8 grid comparing each median `s`-PDF with its moment-matched
@@ -239,7 +242,9 @@ Fractions have direct phase-by-parameter panels and correlation matrices,
 including separate neutral and ionized reductions. Scale heights and dynamics
 have matching full-scatter products and Spearman heatmaps with neutral,
 ionized, and true whole-gas rows. Evolution y-limits use 200--600 Myr values
-so startup anomalies do not compress the later histories.
+so startup anomalies do not compress the later histories. Parameter scatter
+x limits use only the predictor data, preventing temporal error bars from
+expanding shared logarithmic axes.
 The omitted UIM is retained as an explicit closure residual rather than
 renormalizing the requested six phases. Definitions and output schemas are in
 [`docs/phase_resolved_analysis.md`](docs/phase_resolved_analysis.md).
@@ -279,7 +284,9 @@ balance figures, a `2x4` pressure-component/yield figure, and separate `2x3`
 vertical-profile figures for two-phase and total gas. The three alternate
 parameter color mappings are applied to the vertical profiles as well as the
 scalar relation figures. `prfm_pressure_weight_time_evolution.png` shows the
-full-suite midplane pressure and vertical weight histories.
+full-suite midplane pressure and vertical weight histories. A 3-by-7 grid and
+matching Spearman heatmap correlate total pressure, weight, and SFR with all
+four direct inputs, \(\kappa\), \(\rho_*\), and mean SFR.
 
 The physical definitions, discrete reduction equations, unit conversions,
 output schema, and interpretation are documented in

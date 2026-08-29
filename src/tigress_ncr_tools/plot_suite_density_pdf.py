@@ -16,6 +16,8 @@ from pathena.proj2d_reader import read_proj2d
 from .correlation_parameters import (
     ENVIRONMENT_PARAMETER_SPECS,
     parameter_axis_limits,
+    plot_annotated_correlation_matrix,
+    spearman_coefficient,
 )
 from .plot_suite_density_spectrum import (
     EXCLUDED_MODELS,
@@ -61,6 +63,54 @@ DEFAULT_PDF_BINS = 100
 DEFAULT_CMAP = "plasma"
 DEFAULT_HISTORY_SAMPLES = 4000
 DEFAULT_PDF_DISPLAY_FLOOR = 1.0e-4
+DEFAULT_PHASE_SUMMARY = Path(
+    "phase_evolution_zprof/phase_correlation_model_summary.csv"
+)
+PDF_WIDTH_SPECS = (
+    (
+        "std_delta",
+        r"$\sigma_\delta$",
+        "std_delta_time_median",
+        "std_delta_time_percentile16",
+        "std_delta_time_percentile84",
+    ),
+    (
+        "std_s",
+        r"$\sigma_s$",
+        "std_s_time_median",
+        "std_s_time_percentile16",
+        "std_s_time_percentile84",
+    ),
+)
+PDF_PHASE_SPECS = (
+    ("cold", "CNM+CMM"),
+    ("unm", "UNM"),
+    ("wnm", "WNM"),
+    ("wim", "WIM"),
+    ("whim", "WHIM"),
+    ("him", "HIM"),
+    ("neutral", "Neutral"),
+    ("ionized", "Ionized"),
+    ("whole", "Whole"),
+)
+PDF_PHASE_VELOCITY_SPECS = (
+    ("sigma_3d_box", r"$\sigma_{\rm 3D}$: whole box"),
+    ("sigma_3d_hgas", r"$\sigma_{\rm 3D}$: $|z|\leq H_{\rm gas}$"),
+    ("sigma_eff_z_box", r"$\sigma_{{\rm eff},z}$: whole box"),
+    (
+        "sigma_eff_z_hgas",
+        r"$\sigma_{{\rm eff},z}$: $|z|\leq H_{\rm gas}$",
+    ),
+)
+PDF_CHARACTERISTIC_VELOCITY_MATRIX_LABELS = (
+    r"$\sigma_1$",
+    r"$\sigma_2$",
+    r"$\sigma_3$",
+    r"$c_{\rm th}$",
+    r"$v_{A,1}$",
+    r"$v_{A,2}$",
+    r"$v_{A,3}$",
+)
 
 
 def frame_density_pdf(frame, delta_edges, s_edges, field="nH"):
@@ -397,6 +447,338 @@ def pdf_display_limits(centers, density, floor=DEFAULT_PDF_DISPLAY_FLOOR):
     )
     peak = float(np.nanmax(envelope[use]))
     return x_limits, (floor / 2.0, peak * 1.5)
+
+
+def load_phase_velocity_summary(path, pdf_summary):
+    """Load and model-align the phase velocity summary used by PDF products."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"missing phase velocity summary: {path}")
+    phase_summary = pd.read_csv(path)
+    required = {"model", "phase", "average_start", "average_stop"}
+    for field, _ in PDF_PHASE_VELOCITY_SPECS:
+        required.update(
+            {
+                f"{field}_time_median",
+                f"{field}_time_percentile16",
+                f"{field}_time_percentile84",
+            }
+        )
+    missing = sorted(required - set(phase_summary.columns))
+    if missing:
+        raise ValueError(f"{path} lacks phase velocity columns: {', '.join(missing)}")
+    phase_keys = [key for key, _ in PDF_PHASE_SPECS]
+    phase_summary = phase_summary[phase_summary["phase"].isin(phase_keys)].copy()
+    if phase_summary.duplicated(["model", "phase"]).any():
+        raise ValueError(f"duplicate model/phase rows in {path}")
+    model_order = pdf_summary["model"].astype(str).tolist()
+    expected = set(model_order)
+    frames = []
+    for phase, _ in PDF_PHASE_SPECS:
+        selected = phase_summary[phase_summary["phase"] == phase]
+        if set(selected["model"].astype(str)) != expected:
+            raise ValueError(f"{phase} phase model set differs from PDF summary")
+        frames.append(selected.set_index("model").loc[model_order].reset_index())
+    return pd.concat(frames, ignore_index=True)
+
+
+def _summary_bound(frame, field):
+    values = frame[field].to_numpy(dtype=float)
+    values = np.unique(values[np.isfinite(values)])
+    return float(values[0]) if values.size == 1 else np.nan
+
+
+def pdf_width_correlation_table(summary, phase_summary=None):
+    """Return Spearman coefficients for every plotted PDF-width relation."""
+    rows = []
+    pdf_start = _summary_bound(summary, "average_start")
+    pdf_stop = _summary_bound(summary, "average_stop")
+
+    def append_family(family, predictors, predictor_frame, *, phase=""):
+        for width, width_label, median, _, _ in PDF_WIDTH_SPECS:
+            y = summary[median].to_numpy(dtype=float)
+            for predictor, predictor_label, predictor_field in predictors:
+                x = predictor_frame[predictor_field].to_numpy(dtype=float)
+                coefficient, count = spearman_coefficient(x, y)
+                rows.append(
+                    {
+                        "family": family,
+                        "width": width,
+                        "width_label": width_label,
+                        "predictor": predictor,
+                        "predictor_label": predictor_label,
+                        "phase": phase,
+                        "velocity": "",
+                        "spearman_rho": coefficient,
+                        "model_count": count,
+                        "pdf_average_start": pdf_start,
+                        "pdf_average_stop": pdf_stop,
+                        "predictor_average_start": pdf_start,
+                        "predictor_average_stop": pdf_stop,
+                    }
+                )
+
+    append_family(
+        "parameter",
+        [
+            (field, short_label, field)
+            for field, short_label, _, _ in ENVIRONMENT_PARAMETER_SPECS
+        ],
+        summary,
+    )
+    append_family(
+        "characteristic_velocity",
+        [
+            (field, label, f"{field}_time_median")
+            for field, label, _, _ in SPEED_QUANTITIES
+        ],
+        summary,
+    )
+    append_family(
+        "derived_velocity",
+        [
+            (field, label, f"{field}_time_median")
+            for field, label, _ in DERIVED_VELOCITY_QUANTITIES
+        ],
+        summary,
+    )
+    if phase_summary is not None:
+        model_order = summary["model"].astype(str).tolist()
+        phase_start = _summary_bound(phase_summary, "average_start")
+        phase_stop = _summary_bound(phase_summary, "average_stop")
+        for velocity, velocity_label in PDF_PHASE_VELOCITY_SPECS:
+            for phase, phase_label in PDF_PHASE_SPECS:
+                selected = (
+                    phase_summary[phase_summary["phase"] == phase]
+                    .set_index("model")
+                    .loc[model_order]
+                )
+                x = selected[f"{velocity}_time_median"].to_numpy(dtype=float)
+                for width, width_label, median, _, _ in PDF_WIDTH_SPECS:
+                    coefficient, count = spearman_coefficient(
+                        x, summary[median].to_numpy(dtype=float)
+                    )
+                    rows.append(
+                        {
+                            "family": "phase_velocity",
+                            "width": width,
+                            "width_label": width_label,
+                            "predictor": phase,
+                            "predictor_label": phase_label,
+                            "phase": phase,
+                            "velocity": velocity,
+                            "velocity_label": velocity_label,
+                            "spearman_rho": coefficient,
+                            "model_count": count,
+                            "pdf_average_start": pdf_start,
+                            "pdf_average_stop": pdf_stop,
+                            "predictor_average_start": phase_start,
+                            "predictor_average_stop": phase_stop,
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def _pdf_correlation_matrix(correlations, family, predictors, *, velocity=""):
+    matrix = np.full((len(PDF_WIDTH_SPECS), len(predictors)), np.nan)
+    for row, (width, _, _, _, _) in enumerate(PDF_WIDTH_SPECS):
+        for column, predictor in enumerate(predictors):
+            selected = correlations[
+                (correlations["family"] == family)
+                & (correlations["width"] == width)
+                & (correlations["predictor"] == predictor)
+            ]
+            if velocity:
+                selected = selected[selected["velocity"] == velocity]
+            if len(selected) == 1:
+                matrix[row, column] = selected["spearman_rho"].iloc[0]
+    return matrix
+
+
+def plot_pdf_width_correlation_matrices(
+    correlations,
+    output_dir,
+    summary_name,
+    *,
+    quantity_label="Gas column",
+    dpi=180,
+):
+    """Plot annotated matrices for every PDF-width scatter family."""
+    output_dir = Path(output_dir)
+    width_labels = [item[1] for item in PDF_WIDTH_SPECS]
+    families = (
+        (
+            "parameter",
+            [item[0] for item in ENVIRONMENT_PARAMETER_SPECS],
+            [item[1] for item in ENVIRONMENT_PARAMETER_SPECS],
+            "parameter",
+        ),
+        (
+            "characteristic_velocity",
+            [item[0] for item in SPEED_QUANTITIES],
+            PDF_CHARACTERISTIC_VELOCITY_MATRIX_LABELS,
+            "velocity",
+        ),
+        (
+            "derived_velocity",
+            [item[0] for item in DERIVED_VELOCITY_QUANTITIES],
+            [item[1] for item in DERIVED_VELOCITY_QUANTITIES],
+            "derived_velocity",
+        ),
+    )
+    for family, predictors, labels, slug in families:
+        matrix = _pdf_correlation_matrix(correlations, family, predictors)
+        plot_annotated_correlation_matrix(
+            matrix,
+            width_labels,
+            labels,
+            output_dir / f"{summary_name}_{slug}_correlation_matrix.png",
+            title=f"{quantity_label} PDF-width correlations",
+            dpi=dpi,
+        )
+    if "phase_velocity" not in set(correlations["family"]):
+        return
+    phases = [item[0] for item in PDF_PHASE_SPECS]
+    phase_labels = [item[1] for item in PDF_PHASE_SPECS]
+    for velocity, velocity_label in PDF_PHASE_VELOCITY_SPECS:
+        matrix = _pdf_correlation_matrix(
+            correlations, "phase_velocity", phases, velocity=velocity
+        )
+        plot_annotated_correlation_matrix(
+            matrix,
+            width_labels,
+            phase_labels,
+            output_dir
+            / f"{summary_name}_phase_{velocity}_correlation_matrix.png",
+            title=f"{quantity_label} PDF widths versus phase {velocity_label}",
+            dpi=dpi,
+            figsize=(12.0, 4.2),
+        )
+
+
+def plot_pdf_width_phase_velocity_correlations(
+    summary,
+    phase_summary,
+    output_dir,
+    summary_name,
+    *,
+    quantity_label="Gas column",
+    dpi=180,
+):
+    """Plot PDF widths against phase-resolved 3D and support speeds."""
+    model_order = summary["model"].astype(str).tolist()
+    color_values = summary["mean_sfr10"].to_numpy(dtype=float)
+    cmap, norm = sfr_colormap(color_values, DEFAULT_CMAP, "log")
+    pdf_bounds = (
+        _summary_bound(summary, "average_start"),
+        _summary_bound(summary, "average_stop"),
+    )
+    phase_bounds = (
+        _summary_bound(phase_summary, "average_start"),
+        _summary_bound(phase_summary, "average_stop"),
+    )
+    for velocity, velocity_label in PDF_PHASE_VELOCITY_SPECS:
+        figure, axes = plt.subplots(
+            len(PDF_WIDTH_SPECS),
+            len(PDF_PHASE_SPECS),
+            figsize=(24.5, 7.8),
+            sharey="row",
+        )
+        for column, (phase, phase_label) in enumerate(PDF_PHASE_SPECS):
+            selected = (
+                phase_summary[phase_summary["phase"] == phase]
+                .set_index("model")
+                .loc[model_order]
+            )
+            x = selected[f"{velocity}_time_median"].to_numpy(dtype=float)
+            x_low = selected[f"{velocity}_time_percentile16"].to_numpy(dtype=float)
+            x_high = selected[f"{velocity}_time_percentile84"].to_numpy(dtype=float)
+            for row, (
+                width,
+                width_label,
+                median_field,
+                low_field,
+                high_field,
+            ) in enumerate(PDF_WIDTH_SPECS):
+                axis = axes[row, column]
+                median = summary[median_field].to_numpy(dtype=float)
+                low = summary[low_field].to_numpy(dtype=float)
+                high = summary[high_field].to_numpy(dtype=float)
+                valid = np.all(
+                    np.isfinite([x, x_low, x_high, median, low, high]), axis=0
+                ) & (x_low <= x) & (x <= x_high) & (low <= median) & (median <= high)
+                axis.errorbar(
+                    x[valid],
+                    median[valid],
+                    xerr=np.vstack(
+                        (x[valid] - x_low[valid], x_high[valid] - x[valid])
+                    ),
+                    yerr=np.vstack(
+                        (median[valid] - low[valid], high[valid] - median[valid])
+                    ),
+                    fmt="none",
+                    ecolor="0.68",
+                    elinewidth=0.65,
+                    zorder=1,
+                )
+                axis.scatter(
+                    x[valid],
+                    median[valid],
+                    c=color_values[valid],
+                    cmap=cmap,
+                    norm=norm,
+                    s=25,
+                    edgecolor="black",
+                    linewidth=0.28,
+                    zorder=2,
+                )
+                axis.set_xlim(
+                    parameter_axis_limits(
+                        np.concatenate((x_low[valid], x_high[valid])), "linear"
+                    )
+                )
+                coefficient, count = spearman_coefficient(x[valid], median[valid])
+                axis.text(
+                    0.04,
+                    0.95,
+                    rf"$\rho_s={coefficient:+.2f}$ ($N={count}$)",
+                    transform=axis.transAxes,
+                    va="top",
+                    fontsize=7.5,
+                )
+                axis.grid(alpha=0.18)
+                axis.tick_params(direction="in", top=True, right=True, labelsize=8)
+                if row == 0:
+                    axis.set_title(phase_label, fontsize=10)
+                if row == len(PDF_WIDTH_SPECS) - 1:
+                    axis.set_xlabel(r"speed $[\mathrm{km\,s^{-1}}]$", fontsize=8.5)
+                if column == 0:
+                    axis.set_ylabel(width_label)
+        scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+        color_axis = figure.add_axes((0.37, 0.075, 0.26, 0.020))
+        colorbar = figure.colorbar(scalar, cax=color_axis, orientation="horizontal")
+        colorbar.set_label(
+            r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+            r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+        )
+        figure.suptitle(
+            f"{quantity_label} PDF widths ({pdf_bounds[0]:g}--{pdf_bounds[1]:g} Myr) "
+            f"versus phase {velocity_label} ({phase_bounds[0]:g}--"
+            f"{phase_bounds[1]:g} Myr)",
+            fontsize=13,
+        )
+        figure.subplots_adjust(
+            left=0.045,
+            right=0.995,
+            bottom=0.21,
+            top=0.89,
+            hspace=0.22,
+            wspace=0.30,
+        )
+        output = Path(output_dir) / f"{summary_name}_phase_{velocity}_correlations.png"
+        figure.savefig(output, dpi=dpi, facecolor="white")
+        plt.close(figure)
+        print(f"Wrote {output}", flush=True)
 
 
 def plot_pdf_width_correlations(
@@ -849,6 +1231,34 @@ def render_suite_density_pdf(
     plot_pdf_width_derived_velocity_correlations(
         summary,
         output_dir / f"{summary_name}_derived_velocity_correlations.png",
+        quantity_label=quantity_spec.label.capitalize(),
+        dpi=dpi,
+    )
+    phase_summary_path = suite / DEFAULT_PHASE_SUMMARY
+    phase_summary = None
+    if phase_summary_path.is_file():
+        phase_summary = load_phase_velocity_summary(phase_summary_path, summary)
+        plot_pdf_width_phase_velocity_correlations(
+            summary,
+            phase_summary,
+            output_dir,
+            summary_name,
+            quantity_label=quantity_spec.label.capitalize(),
+            dpi=dpi,
+        )
+    else:
+        print(
+            f"Skipping phase-velocity PDF correlations; missing {phase_summary_path}",
+            flush=True,
+        )
+    correlations = pdf_width_correlation_table(summary, phase_summary)
+    correlation_path = output_dir / f"{summary_name}_correlation_coefficients.csv"
+    _atomic_csv(correlations, correlation_path)
+    print(f"Wrote {correlation_path}", flush=True)
+    plot_pdf_width_correlation_matrices(
+        correlations,
+        output_dir,
+        summary_name,
         quantity_label=quantity_spec.label.capitalize(),
         dpi=dpi,
     )

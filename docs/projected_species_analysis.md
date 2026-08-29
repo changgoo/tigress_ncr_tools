@@ -64,7 +64,11 @@ The H I products are written beneath `SUITE/hi_pdf_theta0/` as
 `hi_pdfs.npz`, `hi_pdf_widths.csv`, and quantity-labeled figures. The EM
 products use `SUITE/em_pdf_theta0/` and the corresponding `em_*` names. See
 [density_pdf.md](density_pdf.md) for the estimator, temporal summaries,
-Gaussian comparison, and correlation products.
+Gaussian comparison, and correlation products. For total gas, H I, and EM,
+the PDF command also joins the existing nine-row-per-model phase summary to
+produce \(\sigma_{\rm 3D}\) and \(\sigma_{{\rm eff},z}\) scatter grids,
+long-form coefficients, and annotated heatmaps for both the whole box and
+\(|z|\leq H_{\rm gas}\).
 
 ### Low-column H I bump and neutral-fraction censoring
 

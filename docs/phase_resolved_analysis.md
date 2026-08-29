@@ -233,6 +233,11 @@ Spearman coefficient. The reduced neutral and ionized values are summed at
 every time before temporal statistics are calculated. They can sum to less than unity
 because UIM remains an explicit, unassigned residual.
 
+All parameter-relation x limits are computed from the finite predictor values
+alone, with a 5% margin in linear or logarithmic plotting space. Temporal
+y-error bars therefore cannot expand shared logarithmic x axes into
+unphysical low-parameter ranges.
+
 The remaining heatmaps correlate the same per-model temporal medians and do
 not treat the correlated direct/derived predictors as independent causal
 experiments. In particular, \(\Sigma_*\)--\(\rho_*\) and

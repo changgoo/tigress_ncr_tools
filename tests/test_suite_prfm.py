@@ -10,13 +10,17 @@ from tigress_ncr_tools.plot_suite_hst_evolution import sfr_colormap
 from tigress_ncr_tools.plot_suite_prfm import (
     PARAMETER_COLOR_SPECS,
     PRESSURE_COMPONENTS,
+    PRFM_PARAMETER_SPECS,
     YIELD_KMS_PER_POK_SFR,
     ZPROF_PRESSURE_OVER_KB,
     plot_prfm_balance,
     plot_prfm_components,
+    plot_prfm_parameter_correlation_matrix,
+    plot_prfm_parameter_relations,
     plot_prfm_time_evolution,
     plot_prfm_vertical_profiles,
     reduce_zprof_snapshot,
+    prfm_parameter_correlations,
     summarize_prfm,
 )
 
@@ -216,14 +220,29 @@ def _profile_summary():
 def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     ranked = [(Path("high"), 2.0e-3), (Path("low"), 1.0e-3)]
     parameters = {
-        "high": {"omega": 0.05, "stellar_midplane_density": 0.1, "qshear": 1.0},
-        "low": {"omega": 0.025, "stellar_midplane_density": 0.05, "qshear": 0.5},
+        "high": {
+            "stellar_surface_density": 80.0,
+            "stellar_scale_height": 400.0,
+            "omega": 0.05,
+            "qshear": 1.0,
+            "kappa": np.sqrt(2.0) * 0.05,
+            "stellar_midplane_density": 0.1,
+        },
+        "low": {
+            "stellar_surface_density": 20.0,
+            "stellar_scale_height": 200.0,
+            "omega": 0.025,
+            "qshear": 0.5,
+            "kappa": np.sqrt(3.0) * 0.025,
+            "stellar_midplane_density": 0.05,
+        },
     }
     summary = summarize_prfm(_time_series(), ranked, parameters)
     assert summary["model"].tolist() == ["high", "low"]
     assert np.all(summary["samples"] == 3)
     assert summary.loc[0, "pressure_total_mean"] == 6000.0
     assert summary.loc[0, "omega"] == 0.05
+    assert summary.loc[0, "mean_sfr10"] == 2.0e-3
     late_summary = summarize_prfm(
         _time_series(), ranked, parameters, time_bounds=(400.0, 600.0)
     )
@@ -237,6 +256,8 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
     vertical = tmp_path / "vertical.png"
     vertical_total_gas = tmp_path / "vertical_total_gas.png"
     evolution = tmp_path / "evolution.png"
+    parameter_relations = tmp_path / "parameter_relations.png"
+    parameter_matrix = tmp_path / "parameter_matrix.png"
     plot_prfm_balance(summary, balance, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_components(summary, components, cmap=cmap, norm=norm, dpi=50)
     plot_prfm_balance(
@@ -271,12 +292,25 @@ def test_summary_and_prfm_figures_include_all_relations(tmp_path):
         average_bounds=(400.0, 600.0),
         dpi=50,
     )
+    correlations = prfm_parameter_correlations(late_summary)
+    assert len(correlations) == 3 * len(PRFM_PARAMETER_SPECS)
+    assert np.all(correlations["model_count"] == 2)
+    plot_prfm_parameter_relations(
+        late_summary,
+        parameter_relations,
+        cmap=cmap,
+        norm=norm,
+        dpi=40,
+    )
+    plot_prfm_parameter_correlation_matrix(correlations, parameter_matrix, dpi=40)
     assert delta.stat().st_size > 0
     assert vertical.stat().st_size > 0
     assert vertical_total_gas.stat().st_size > 0
     assert evolution.stat().st_size > 0
     assert balance.stat().st_size > 0
     assert components.stat().st_size > 0
+    assert parameter_relations.stat().st_size > 0
+    assert parameter_matrix.stat().st_size > 0
 
 
 def test_parameter_colormaps_are_distinct():

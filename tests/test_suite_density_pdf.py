@@ -10,10 +10,14 @@ import matplotlib.pyplot as plt
 
 from tigress_ncr_tools.correlation_parameters import parameter_axis_limits
 from tigress_ncr_tools.plot_suite_density_pdf import (
+    PDF_PHASE_SPECS,
+    PDF_PHASE_VELOCITY_SPECS,
     attach_velocity_summary,
     frame_density_pdf,
     gaussian_fit_from_pdf,
+    load_phase_velocity_summary,
     pdf_display_limits,
+    pdf_width_correlation_table,
     plot_median_pdfs,
     plot_pdf_width_derived_velocity_correlations,
     plot_pdf_width_correlations,
@@ -21,6 +25,7 @@ from tigress_ncr_tools.plot_suite_density_pdf import (
     plot_s_pdf_fit_grid,
 )
 from tigress_ncr_tools.plot_suite_hst_evolution import (
+    DERIVED_VELOCITY_QUANTITIES,
     SPEED_QUANTITIES,
     derived_velocity_quantities,
 )
@@ -216,3 +221,56 @@ def test_velocity_summary_and_correlation_figure(monkeypatch, tmp_path):
     derived_output = tmp_path / "derived_velocity_correlations.png"
     plot_pdf_width_derived_velocity_correlations(augmented, derived_output, dpi=40)
     assert derived_output.stat().st_size > 0
+
+
+def test_pdf_phase_velocity_correlations_align_models_and_cover_all_families(
+    tmp_path,
+):
+    models = [f"model{index}" for index in range(1, 5)]
+    summary = pd.DataFrame(
+        {
+            "model": models,
+            "mean_sfr10": np.arange(1, 5, dtype=float),
+            "average_start": 200.0,
+            "average_stop": 600.0,
+            "stellar_surface_density": np.arange(1, 5, dtype=float),
+            "stellar_scale_height": np.arange(1, 5, dtype=float),
+            "omega": np.arange(1, 5, dtype=float),
+            "qshear": np.arange(1, 5, dtype=float),
+            "kappa": np.arange(1, 5, dtype=float),
+            "stellar_midplane_density": np.arange(1, 5, dtype=float),
+        }
+    )
+    for width in ("std_delta", "std_s"):
+        summary[f"{width}_time_median"] = np.arange(1, 5, dtype=float)
+        summary[f"{width}_time_percentile16"] = np.arange(1, 5) - 0.2
+        summary[f"{width}_time_percentile84"] = np.arange(1, 5) + 0.2
+    for field, _, _, _ in SPEED_QUANTITIES:
+        summary[f"{field}_time_median"] = np.arange(1, 5, dtype=float)
+    for field, _, _ in DERIVED_VELOCITY_QUANTITIES:
+        summary[f"{field}_time_median"] = np.arange(1, 5, dtype=float)
+
+    phase_rows = []
+    for phase, _ in PDF_PHASE_SPECS:
+        for model in reversed(models):
+            model_value = float(model.removeprefix("model"))
+            row = {
+                "model": model,
+                "phase": phase,
+                "average_start": 400.0,
+                "average_stop": 600.0,
+            }
+            for velocity, _ in PDF_PHASE_VELOCITY_SPECS:
+                row[f"{velocity}_time_median"] = model_value
+                row[f"{velocity}_time_percentile16"] = model_value - 0.2
+                row[f"{velocity}_time_percentile84"] = model_value + 0.2
+            phase_rows.append(row)
+    phase_path = tmp_path / "phase_summary.csv"
+    pd.DataFrame(phase_rows).to_csv(phase_path, index=False)
+    phase_summary = load_phase_velocity_summary(phase_path, summary)
+    correlations = pdf_width_correlation_table(summary, phase_summary)
+
+    assert len(correlations) == 108
+    assert len(correlations[correlations["family"] == "phase_velocity"]) == 72
+    np.testing.assert_allclose(correlations["spearman_rho"], 1.0)
+    assert np.all(correlations["model_count"] == 4)

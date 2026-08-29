@@ -13,6 +13,12 @@ import pandas as pd
 from pathena.hst_reader import read_hst
 from pathena.units import KB_CGS, KM_CGS, MSUN_CGS, MYR_CGS, PC_CGS
 
+from .correlation_parameters import (
+    ENVIRONMENT_PARAMETER_SPECS,
+    parameter_axis_limits,
+    plot_annotated_correlation_matrix,
+    spearman_coefficient,
+)
 from .plot_suite_evolution import (
     DEFAULT_MODEL_GLOB,
     DEFAULT_SFR_RANGE,
@@ -43,6 +49,25 @@ PARAMETER_COLOR_SPECS = (
         r"$\Sigma_*/(2H_*)\ [M_\odot\,{\rm pc}^{-3}]$",
     ),
     ("qshear", "linear", "magma", r"$q$"),
+)
+PRFM_PARAMETER_SPECS = ENVIRONMENT_PARAMETER_SPECS
+PRFM_CORRELATION_QUANTITIES = (
+    (
+        "pressure_total",
+        r"$P_{\rm tot,2p}$",
+        r"$\langle P_{\rm tot,2p}\rangle\ [k_B\,{\rm cm}^{-3}\,{\rm K}]$",
+    ),
+    (
+        "weight_total",
+        r"$\mathcal{W}$",
+        r"$\langle\mathcal{W}\rangle\ [k_B\,{\rm cm}^{-3}\,{\rm K}]$",
+    ),
+    (
+        "sfr40",
+        r"$\Sigma_{\rm SFR,40}$",
+        r"$\langle\Sigma_{\rm SFR,40}\rangle\ "
+        r"[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$",
+    ),
 )
 DEFAULT_TIME_RANGE = DEFAULT_SFR_RANGE
 DEFAULT_SUMMARY_RANGE = (400.0, 600.0)
@@ -411,7 +436,7 @@ def _history_sfr(model):
 
 
 def model_prfm_parameters(model):
-    """Return Omega, stellar midplane density, and shear parameter."""
+    """Return the direct and derived environmental model parameters."""
     _, qshear, omega = read_shear_parameters(model)
     stellar_surface_density = input_parameter(Path(model), "SurfS")
     stellar_scale_height = input_parameter(Path(model), "zstar")
@@ -420,8 +445,12 @@ def model_prfm_parameters(model):
         raise ValueError(f"nonfinite PRFM model parameters for {model}")
     if stellar_scale_height <= 0.0:
         raise ValueError(f"non-positive stellar scale height for {model}")
+    kappa = np.sqrt(2.0 * (2.0 - qshear)) * omega
     return {
         "omega": float(omega),
+        "kappa": float(kappa),
+        "stellar_surface_density": float(stellar_surface_density),
+        "stellar_scale_height": float(stellar_scale_height),
         "stellar_midplane_density": float(
             stellar_surface_density / (2.0 * stellar_scale_height)
         ),
@@ -610,6 +639,7 @@ def summarize_prfm(time_series, ranked, model_parameters=None, time_bounds=None)
             "samples": len(frame),
             "time_min": float(frame["time"].min()),
             "time_max": float(frame["time"].max()),
+            "mean_sfr10": mean_sfr[model],
             "mean_sfr10_color": mean_sfr[model],
         }
         row.update(model_parameters.get(model, {}))
@@ -672,6 +702,168 @@ def _decorate_relation_axis(axis, xlabel, ylabel):
     axis.set_ylabel(ylabel)
     axis.grid(alpha=0.18, which="both")
     axis.tick_params(direction="in", top=True, right=True)
+
+
+def prfm_parameter_correlations(summary):
+    """Return PRFM response correlations with every suite predictor."""
+    rows = []
+    for quantity, quantity_label, _ in PRFM_CORRELATION_QUANTITIES:
+        y = summary[f"{quantity}_mean"].to_numpy(dtype=float)
+        for parameter, parameter_label, _, _ in PRFM_PARAMETER_SPECS:
+            coefficient, count = spearman_coefficient(
+                summary[parameter].to_numpy(dtype=float), y
+            )
+            rows.append(
+                {
+                    "quantity": quantity,
+                    "quantity_label": quantity_label,
+                    "parameter": parameter,
+                    "parameter_label": parameter_label,
+                    "spearman_rho": coefficient,
+                    "model_count": count,
+                    "average_start": float(summary["time_min"].min()),
+                    "average_stop": float(summary["time_max"].max()),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def plot_prfm_parameter_relations(
+    summary,
+    output,
+    *,
+    cmap,
+    norm,
+    dpi=180,
+):
+    """Plot pressure, weight, and SFR against all environmental predictors."""
+    figure, axes = plt.subplots(
+        len(PRFM_CORRELATION_QUANTITIES),
+        len(PRFM_PARAMETER_SPECS),
+        figsize=(22.5, 11.2),
+        sharex="col",
+        sharey="row",
+    )
+    colors = summary["mean_sfr10_color"].to_numpy(dtype=float)
+    for column, (parameter, _, parameter_axis_label, scale) in enumerate(
+        PRFM_PARAMETER_SPECS
+    ):
+        x = summary[parameter].to_numpy(dtype=float)
+        x_limits = parameter_axis_limits(x, scale)
+        for row, (quantity, _, quantity_axis_label) in enumerate(
+            PRFM_CORRELATION_QUANTITIES
+        ):
+            axis = axes[row, column]
+            y = summary[f"{quantity}_mean"].to_numpy(dtype=float)
+            low = summary[f"{quantity}_p16"].to_numpy(dtype=float)
+            high = summary[f"{quantity}_p84"].to_numpy(dtype=float)
+            valid = (
+                np.isfinite(x)
+                & np.isfinite(y)
+                & np.isfinite(low)
+                & np.isfinite(high)
+                & np.isfinite(colors)
+                & (y > 0.0)
+                & (low > 0.0)
+                & (low <= y)
+                & (y <= high)
+            )
+            if scale == "log":
+                valid &= x > 0.0
+            for xv, center, lower, upper, color_value in zip(
+                x[valid], y[valid], low[valid], high[valid], colors[valid]
+            ):
+                axis.errorbar(
+                    xv,
+                    center,
+                    yerr=np.asarray([[center - lower], [upper - center]]),
+                    color=cmap(norm(color_value)),
+                    alpha=0.46,
+                    linewidth=0.75,
+                    zorder=1,
+                )
+            axis.scatter(
+                x[valid],
+                y[valid],
+                c=colors[valid],
+                cmap=cmap,
+                norm=norm,
+                s=30,
+                edgecolor="black",
+                linewidth=0.3,
+                zorder=2,
+            )
+            if scale == "log":
+                axis.set_xscale("log")
+            axis.set_xlim(x_limits)
+            axis.set_yscale("log")
+            coefficient, count = spearman_coefficient(x[valid], y[valid])
+            axis.text(
+                0.04,
+                0.95,
+                rf"$\rho_s={coefficient:+.2f}$ ($N={count}$)",
+                transform=axis.transAxes,
+                va="top",
+                fontsize=8,
+            )
+            axis.grid(alpha=0.18, which="both")
+            axis.tick_params(direction="in", top=True, right=True, labelsize=8)
+            if row == 0:
+                axis.set_title(parameter_axis_label, fontsize=10)
+            if row == len(PRFM_CORRELATION_QUANTITIES) - 1:
+                axis.set_xlabel(parameter_axis_label, fontsize=9)
+            if column == 0:
+                axis.set_ylabel(quantity_axis_label)
+    scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    color_axis = figure.add_axes((0.36, 0.055, 0.28, 0.016))
+    colorbar = figure.colorbar(scalar, cax=color_axis, orientation="horizontal")
+    colorbar.set_label(
+        r"$\langle\Sigma_{\rm SFR,10}\rangle_{200-600}$ "
+        r"$[M_\odot\,{\rm kpc}^{-2}\,{\rm yr}^{-1}]$"
+    )
+    start = float(summary["time_min"].min())
+    stop = float(summary["time_max"].max())
+    figure.suptitle(
+        f"PRFM response correlations: {start:g}--{stop:g} Myr averages",
+        fontsize=14,
+    )
+    figure.subplots_adjust(
+        left=0.055,
+        right=0.995,
+        bottom=0.16,
+        top=0.91,
+        hspace=0.20,
+        wspace=0.25,
+    )
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
+
+
+def plot_prfm_parameter_correlation_matrix(correlations, output, *, dpi=180):
+    """Plot the annotated PRFM response-by-parameter Spearman matrix."""
+    quantities = [item[0] for item in PRFM_CORRELATION_QUANTITIES]
+    quantity_labels = [item[1] for item in PRFM_CORRELATION_QUANTITIES]
+    parameters = [item[0] for item in PRFM_PARAMETER_SPECS]
+    parameter_labels = [item[1] for item in PRFM_PARAMETER_SPECS]
+    matrix = np.full((len(quantities), len(parameters)), np.nan)
+    for row, quantity in enumerate(quantities):
+        for column, parameter in enumerate(parameters):
+            selected = correlations[
+                (correlations["quantity"] == quantity)
+                & (correlations["parameter"] == parameter)
+            ]
+            if len(selected) == 1:
+                matrix[row, column] = selected["spearman_rho"].iloc[0]
+    plot_annotated_correlation_matrix(
+        matrix,
+        quantity_labels,
+        parameter_labels,
+        output,
+        title="PRFM response correlations with suite parameters",
+        dpi=dpi,
+        figsize=(10.8, 5.2),
+    )
 
 
 def plot_prfm_balance(
@@ -1079,6 +1271,22 @@ def render_suite_prfm(
         cmap,
         norm,
         bounds=time_bounds,
+    )
+    parameter_correlations = prfm_parameter_correlations(summary)
+    parameter_correlation_path = output_dir / "prfm_parameter_correlations.csv"
+    _atomic_csv(parameter_correlations, parameter_correlation_path)
+    print(f"Wrote {parameter_correlation_path}", flush=True)
+    plot_prfm_parameter_relations(
+        summary,
+        output_dir / "prfm_parameter_relations.png",
+        cmap=cmap,
+        norm=norm,
+        dpi=dpi,
+    )
+    plot_prfm_parameter_correlation_matrix(
+        parameter_correlations,
+        output_dir / "prfm_parameter_correlation_matrix.png",
+        dpi=dpi,
     )
     average_suffix = f" ({summary_bounds[0]:g}--{summary_bounds[1]:g} Myr averages)"
     evolution = output_dir / DEFAULT_EVOLUTION_NAME

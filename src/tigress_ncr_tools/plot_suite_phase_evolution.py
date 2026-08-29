@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .correlation_parameters import parameter_axis_limits
 from .plot_suite_density_spectrum import _atomic_csv, _finite_statistics
 from .plot_suite_evolution import (
     DEFAULT_MODEL_GLOB,
@@ -998,6 +999,7 @@ def _plot_parameter_relation_series(
         alpha=0.86,
         zorder=2,
     )
+    axis.set_xlim(parameter_axis_limits(x, parameter_scale))
     coefficient, count = _spearman_coefficient(x[valid], median[valid])
     return coefficient, count
 

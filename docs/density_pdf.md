@@ -122,6 +122,19 @@ history timestamp. The plotted medians and percentile ranges are then measured
 from those instantaneous series; they are not constructed from independently
 averaged velocity components.
 
+When `SUITE/phase_evolution_zprof/phase_correlation_model_summary.csv` is
+available, four additional 2-by-9 figures compare both PDF widths with
+phase-resolved \(\sigma_{\rm 3D}\) and \(\sigma_{{\rm eff},z}\) for the whole
+box and \(|z|\leq H_{\rm gas}\). Columns are CNM+CMM, UNM, WNM, WIM, WHIM,
+HIM, neutral, ionized, and true whole gas. PDF statistics retain their
+200--600 Myr window, while the default phase-speed summaries use 400--600
+Myr; both intervals are stated in every figure title.
+
+Every direct-relation family has a matching annotated Spearman heatmap.
+Coefficients are calculated from the plotted per-model medians and recorded
+in one long-form CSV, including both averaging intervals for phase-speed
+rows.
+
 ## 3. Median PDF and Gaussian fit
 
 At every stored \(s\) bin, the code takes the temporal median of
@@ -182,6 +195,13 @@ The directory also contains:
 - `density_pdf_widths_derived_velocity_correlations.png`: the 2-by-4 comparison
   with \(\sigma_{\rm 3D}\), \(v_{A,{\rm 3D}}\), \(\mathcal{M}\), and
   \(\mathcal{M}_{\rm corr}\);
+- `density_pdf_widths_phase_{velocity}_correlations.png`: four 2-by-9
+  phase-speed scatter grids, when the phase summary is available;
+- `density_pdf_widths_correlation_coefficients.csv`: exact Spearman
+  coefficients for parameter, whole-history velocity, derived-velocity, and
+  phase-velocity relations;
+- `density_pdf_widths_{family}_correlation_matrix.png`: annotated parameter,
+  velocity, derived-velocity, and phase-velocity coefficient maps;
 - `density_pdf_time_median.png`: all-model median \(\delta\) and \(s\) PDFs,
   with dashed Gaussian curves in the \(s\) panel. Its displayed limits retain
   the union of median-PDF bins with density at least \(10^{-4}\), removing

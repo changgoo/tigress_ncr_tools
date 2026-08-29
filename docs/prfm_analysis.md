@@ -389,8 +389,9 @@ $$
 
 The SFR, $\Omega$, $\rho_*$, and $q$ variants use `plasma`, `viridis`,
 `cividis`, and `magma`, respectively. The $\Omega$ and $\rho_*$ colors use
-logarithmic normalization; $q$ uses linear normalization. These parameters
-are stored directly in `prfm_model_summary.csv`.
+logarithmic normalization; $q$ uses linear normalization. The summary stores
+these quantities together with $\Sigma_*$, $H_*$, and
+$\kappa=\sqrt{2(2-q)}\,\Omega$.
 
 The default time-series cache covers 200--600 Myr, while summary statistics
 and vertical profiles use the 400--600 Myr subset. The per-model summary uses
@@ -457,6 +458,15 @@ mean-SFR `plasma` encoding.
    $\langle\Sigma_{\rm SFR,40}\rangle$; and
 3. $\langle\mathcal{W}\rangle$ versus
    $\langle\Sigma_{\rm SFR,40}\rangle$.
+
+`prfm_parameter_relations.png` is a 3-by-7 direct-relation grid for
+$P_{\rm tot,2p}$, $\mathcal W$, and $\Sigma_{\rm SFR,40}$ against
+$\Sigma_*$, $H_*$, $\Omega$, $q$, $\kappa$, $\rho_*$, and the time-weighted
+200--600 Myr mean $\Sigma_{\rm SFR,10}$. Vertical bars show the response's
+400--600 Myr 16th--84th percentiles. Each panel reports its model-by-model
+Spearman coefficient. `prfm_parameter_correlation_matrix.png` presents the
+same 21 coefficients as an annotated heatmap, and
+`prfm_parameter_correlations.csv` stores their exact values and sample counts.
 
 `prfm_pressure_components_yields.png` has four pressure panels and four yield
 panels for
@@ -531,8 +541,10 @@ requested profile-averaging window, which defaults to 400 and 600 Myr.
 
 ### `prfm_model_summary.csv`
 
-This table contains `model`, `samples`, `time_min`, `time_max`, and
-`mean_sfr10_color`, plus `omega`, `stellar_midplane_density`, and `qshear`.
+This table contains `model`, `samples`, `time_min`, `time_max`,
+`mean_sfr10`, and its backward-compatible plotting alias
+`mean_sfr10_color`, plus `stellar_surface_density`, `stellar_scale_height`,
+`omega`, `qshear`, `kappa`, and `stellar_midplane_density`.
 The default statistics cover 400--600 Myr; the color-driving mean SFR remains
 the time-weighted 200--600 Myr value used for suite ordering.
 For every summarized physical field $X$, it contains
@@ -548,7 +560,8 @@ Rows retain the descending `mean_sfr10_color` model order.
 
 `model_sfr_colors.csv` records the rank, model name, time-weighted mean
 `sfr10`, plotted hexadecimal color, and averaging bounds. The PNG products
-are the diagnostic figures described above.
+are the diagnostic figures described above. `prfm_parameter_correlations.csv`
+is the long-form response-by-parameter coefficient table.
 
 ## Running the analysis
 

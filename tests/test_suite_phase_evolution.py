@@ -196,6 +196,43 @@ def test_reference_axis_limits_exclude_early_anomaly():
     assert reference_axis_limits([np.nan, -1.0, 0.0], log=True) is None
 
 
+def test_parameter_relation_limits_ignore_errorbar_artists():
+    models = [Path(f"model{index}") for index in range(1, 5)]
+    summary = pd.DataFrame(
+        {
+            "model": [model.name for model in models],
+            "phase": "cold",
+            "stellar_scale_height": [200.0, 300.0, 500.0, 800.0],
+            "mean_sfr10": [1.0e-3, 2.0e-3, 3.0e-3, 4.0e-3],
+            "sigma_3d_box_time_median": [10.0, 20.0, 30.0, 40.0],
+            "sigma_3d_box_time_percentile16": [8.0, 18.0, 28.0, 38.0],
+            "sigma_3d_box_time_percentile84": [12.0, 22.0, 32.0, 42.0],
+        }
+    )
+    ranked = [(model, float(index) * 1.0e-3) for index, model in enumerate(models, 1)]
+    cmap, norm = phase_module.sfr_colormap(
+        summary["mean_sfr10"], phase_module.DEFAULT_CMAP, "log"
+    )
+    figure, axis = phase_module.plt.subplots()
+    phase_module._plot_parameter_relation_series(
+        axis,
+        summary,
+        ranked,
+        "cold",
+        "sigma_3d_box",
+        "stellar_scale_height",
+        "log",
+        cmap,
+        norm,
+    )
+    axis.set_xscale("log")
+    np.testing.assert_allclose(
+        axis.get_xlim(),
+        phase_module.parameter_axis_limits(summary["stellar_scale_height"], "log"),
+    )
+    phase_module.plt.close(figure)
+
+
 def test_reduced_phase_fraction_summary_sums_without_renormalizing(monkeypatch):
     fractions = {
         "cold": 0.10,
