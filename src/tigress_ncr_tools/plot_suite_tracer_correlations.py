@@ -11,6 +11,12 @@ import numpy as np
 import pandas as pd
 
 from .correlation_parameters import ENVIRONMENT_PARAMETER_SPECS
+from .plot_suite_density_pdf import (
+    DEFAULT_PHASE_SUMMARY,
+    PDF_PHASE_SPECS,
+    PDF_PHASE_VELOCITY_SPECS,
+    load_phase_velocity_summary,
+)
 from .plot_suite_density_spectrum import _atomic_csv
 from .plot_suite_hst_evolution import sfr_colormap
 
@@ -212,6 +218,54 @@ def parameter_correlation_table(summaries, metrics, family):
     return pd.DataFrame(rows)
 
 
+def phase_velocity_correlation_table(summaries, phase_summary):
+    """Return every tracer PDF-width correlation with phase velocities."""
+    model_order = summaries["gas"]["model"].astype(str).tolist()
+    rows = []
+    for velocity, velocity_label in PDF_PHASE_VELOCITY_SPECS:
+        for phase, phase_label in PDF_PHASE_SPECS:
+            selected = (
+                phase_summary[phase_summary["phase"] == phase]
+                .set_index("model")
+                .loc[model_order]
+            )
+            x = selected[f"{velocity}_time_median"].to_numpy(dtype=float)
+            for tracer in TRACERS:
+                frame = summaries[tracer.key]
+                for metric in PDF_METRICS:
+                    coefficient, count = _spearman(
+                        x, frame[metric.median].to_numpy(dtype=float)
+                    )
+                    rows.append(
+                        {
+                            "family": "pdf_phase_velocity",
+                            "tracer": tracer.key,
+                            "tracer_label": tracer.label,
+                            "metric": metric.key,
+                            "metric_label": metric.label,
+                            "phase": phase,
+                            "phase_label": phase_label,
+                            "velocity": velocity,
+                            "velocity_label": velocity_label,
+                            "spearman_rho": coefficient,
+                            "model_count": count,
+                            "pdf_average_start": float(
+                                frame["average_start"].min()
+                            ),
+                            "pdf_average_stop": float(
+                                frame["average_stop"].max()
+                            ),
+                            "velocity_average_start": float(
+                                selected["average_start"].min()
+                            ),
+                            "velocity_average_stop": float(
+                                selected["average_stop"].max()
+                            ),
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
 def plot_parameter_correlation_matrix(
     correlations,
     metrics,
@@ -270,6 +324,92 @@ def plot_parameter_correlation_matrix(
     colorbar.set_label(r"Spearman $\rho_s$ across models")
     figure.suptitle(title, fontsize=14, y=0.985)
     figure.subplots_adjust(left=0.23, right=0.91, bottom=0.07, top=0.86)
+    figure.savefig(output, dpi=dpi, facecolor="white")
+    plt.close(figure)
+    print(f"Wrote {output}", flush=True)
+
+
+def plot_phase_velocity_correlation_matrix(correlations, output, *, dpi=180):
+    """Plot all tracer PDF widths against every phase-velocity diagnostic."""
+    row_specs = [(tracer, metric) for tracer in TRACERS for metric in PDF_METRICS]
+    phase_names = [item[0] for item in PDF_PHASE_SPECS]
+    phase_labels = [item[1] for item in PDF_PHASE_SPECS]
+    figure, axes = plt.subplots(
+        1,
+        len(PDF_PHASE_VELOCITY_SPECS),
+        figsize=(27.0, 7.2),
+        sharey=True,
+    )
+    image = None
+    for velocity_index, (velocity, velocity_label) in enumerate(
+        PDF_PHASE_VELOCITY_SPECS
+    ):
+        axis = axes[velocity_index]
+        matrix = np.full((len(row_specs), len(phase_names)), np.nan)
+        for row, (tracer, metric) in enumerate(row_specs):
+            for column, phase in enumerate(phase_names):
+                match = correlations[
+                    (correlations["tracer"] == tracer.key)
+                    & (correlations["metric"] == metric.key)
+                    & (correlations["phase"] == phase)
+                    & (correlations["velocity"] == velocity)
+                ]
+                if len(match) == 1:
+                    matrix[row, column] = match["spearman_rho"].iloc[0]
+        image = axis.imshow(
+            matrix,
+            cmap="RdBu_r",
+            vmin=-1.0,
+            vmax=1.0,
+            aspect="auto",
+            interpolation="nearest",
+        )
+        axis.set_xticks(np.arange(len(phase_labels)), phase_labels, rotation=45)
+        axis.tick_params(
+            top=True,
+            labeltop=True,
+            bottom=False,
+            labelbottom=False,
+            labelsize=8,
+        )
+        axis.set_xlabel(velocity_label, fontsize=11, labelpad=14)
+        for separator in (1.5, 3.5):
+            axis.axhline(separator, color="black", linewidth=1.4)
+        for row, column in np.ndindex(matrix.shape):
+            value = matrix[row, column]
+            axis.text(
+                column,
+                row,
+                "--" if not np.isfinite(value) else f"{value:+.2f}",
+                ha="center",
+                va="center",
+                fontsize=7.0,
+                color=(
+                    "0.45"
+                    if not np.isfinite(value)
+                    else "white" if abs(value) > 0.55 else "black"
+                ),
+            )
+    axes[0].set_yticks(
+        np.arange(len(row_specs)),
+        [f"{tracer.label}: {metric.label}" for tracer, metric in row_specs],
+    )
+    axes[0].tick_params(labelleft=True)
+    figure.subplots_adjust(
+        left=0.075,
+        right=0.945,
+        bottom=0.16,
+        top=0.80,
+        wspace=0.08,
+    )
+    color_axis = figure.add_axes((0.958, 0.18, 0.008, 0.58))
+    colorbar = figure.colorbar(image, cax=color_axis)
+    colorbar.set_label(r"Spearman $\rho_s$ across models")
+    figure.suptitle(
+        "Total-gas, H I, and EM PDF-width correlations with phase velocities",
+        fontsize=14,
+        y=0.975,
+    )
     figure.savefig(output, dpi=dpi, facecolor="white")
     plt.close(figure)
     print(f"Wrote {output}", flush=True)
@@ -492,6 +632,32 @@ def render_suite_tracer_correlations(
         ),
         dpi=dpi,
     )
+    phase_summary_path = suite / DEFAULT_PHASE_SUMMARY
+    if phase_summary_path.is_file():
+        phase_summary = load_phase_velocity_summary(
+            phase_summary_path, pdf["gas"]
+        )
+        phase_velocity_correlations = phase_velocity_correlation_table(
+            pdf, phase_summary
+        )
+        phase_velocity_path = (
+            output_dir
+            / "tracer_pdf_width_phase_velocity_correlation_coefficients.csv"
+        )
+        _atomic_csv(phase_velocity_correlations, phase_velocity_path)
+        print(f"Wrote {phase_velocity_path}", flush=True)
+        plot_phase_velocity_correlation_matrix(
+            phase_velocity_correlations,
+            output_dir
+            / "tracer_pdf_width_phase_velocity_correlation_matrix.png",
+            dpi=dpi,
+        )
+    else:
+        print(
+            "Skipping all-tracer phase-velocity matrix; missing "
+            f"{phase_summary_path}",
+            flush=True,
+        )
     return pdf_correlations, spectrum_correlations
 
 

@@ -169,6 +169,14 @@ matrix uses \(L_{\rm in}\), \(\alpha\), and \(A_2\); axial \(\phi_2\) remains
 in the scatter grids but is omitted from an ordinary Spearman matrix because
 its \(180^\circ\) wrap makes linear ranks coordinate-dependent.
 
+When the phase summary is available, the same command writes
+`tracer_pdf_width_phase_velocity_correlation_matrix.png`. Its six rows are
+\(\sigma_\delta\) and \(\sigma_s\) for total gas, H I, and EM; four blocks
+contain the nine phases for whole-box and inner-slab \(\sigma_{\rm 3D}\) and
+\(\sigma_{{\rm eff},z}\). Exact values, model counts, and PDF/velocity
+averaging bounds are stored in
+`tracer_pdf_width_phase_velocity_correlation_coefficients.csv`.
+
 For all 32 models, gas and H I remain closely coupled:
 
 | diagnostic | gas--H I \(\rho_s\) |

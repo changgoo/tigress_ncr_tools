@@ -225,7 +225,9 @@ cells below a chosen neutral-fraction threshold.
 After all three tracer summaries exist, `plot-suite-tracer-correlations`
 compares gas, H I, and EM PDF widths and the \(L_{\rm in}\), \(\alpha\), and
 \(A_2\) spectrum diagnostics, including temporal ranges, pairwise Spearman
-coefficients, and annotated tracer-by-parameter correlation matrices.
+coefficients, and annotated tracer-by-parameter correlation matrices. A
+second combined PDF-width matrix places all six tracer/width combinations
+against the nine phases in each of the four phase-velocity definitions.
 
 ## Six-phase zprof diagnostics
 
