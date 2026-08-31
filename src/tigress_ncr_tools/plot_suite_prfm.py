@@ -3,6 +3,7 @@
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
+import json
 from pathlib import Path
 import re
 
@@ -39,6 +40,7 @@ DEFAULT_OUTPUT_NAME = "prfm_diagnostics"
 DEFAULT_TIME_SERIES_NAME = "prfm_time_series.csv"
 DEFAULT_SUMMARY_NAME = "prfm_model_summary.csv"
 DEFAULT_PROFILE_NAME = "prfm_vertical_profiles.csv"
+DEFAULT_CONFIG_NAME = "prfm_reduction_config.json"
 DEFAULT_EVOLUTION_NAME = "prfm_pressure_weight_time_evolution.png"
 DEFAULT_CMAP = "plasma"
 PARAMETER_COLOR_SPECS = (
@@ -710,6 +712,31 @@ def _atomic_csv(frame, path):
     temporary.replace(path)
 
 
+def _atomic_json(value, path):
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def prfm_reduction_config(
+    time_bounds,
+    summary_bounds,
+    stride,
+    midplane_half_width,
+    top_half_width,
+):
+    """Return the versioned configuration governing cached reductions."""
+    return {
+        "schema_version": 1,
+        "time_bounds": [float(value) for value in time_bounds],
+        "summary_bounds": [float(value) for value in summary_bounds],
+        "stride": int(stride),
+        "midplane_half_width": float(midplane_half_width),
+        "top_half_width": float(top_half_width),
+    }
+
+
 def _draw_summary_points(axis, summary, xfield, yfield, cmap, norm):
     """Draw temporal means with independent 16--84 percentile bars."""
     for _, row in summary.iterrows():
@@ -1255,7 +1282,22 @@ def render_suite_prfm(
 
     time_series_path = output_dir / DEFAULT_TIME_SERIES_NAME
     profile_path = output_dir / DEFAULT_PROFILE_NAME
-    cache_ready = time_series_path.exists() and profile_path.exists()
+    config_path = output_dir / DEFAULT_CONFIG_NAME
+    expected_config = prfm_reduction_config(
+        time_bounds,
+        summary_bounds,
+        stride,
+        midplane_half_width,
+        top_half_width,
+    )
+    cache_ready = (
+        time_series_path.exists()
+        and profile_path.exists()
+        and config_path.exists()
+    )
+    if cache_ready:
+        with config_path.open() as stream:
+            cache_ready = json.load(stream) == expected_config
     if cache_ready:
         cached_columns = pd.read_csv(time_series_path, nrows=0).columns
         cached_profile = pd.read_csv(profile_path, nrows=1)
@@ -1295,6 +1337,7 @@ def render_suite_prfm(
         )
         _atomic_csv(time_series, time_series_path)
         _atomic_csv(profile_summary, profile_path)
+        _atomic_json(expected_config, config_path)
         print(f"Wrote {profile_path}", flush=True)
         print(f"Wrote {time_series_path}", flush=True)
 

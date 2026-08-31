@@ -21,6 +21,7 @@ from tigress_ncr_tools.plot_suite_prfm import (
     plot_prfm_parameter_relations,
     plot_prfm_time_evolution,
     plot_prfm_vertical_profiles,
+    prfm_reduction_config,
     reduce_zprof_snapshot,
     prfm_parameter_correlations,
     summarize_prfm,
@@ -39,6 +40,18 @@ def test_main_can_skip_parameter_color_variants(monkeypatch, tmp_path):
     )
     assert captured["parameter_colors"] is False
     assert captured["workers"] == 3
+
+def test_reduction_config_records_cache_governing_settings():
+    config = prfm_reduction_config((200, 600), (400, 600), 2, 10, 500)
+    assert config == {
+        "schema_version": 1,
+        "time_bounds": [200.0, 600.0],
+        "summary_bounds": [400.0, 600.0],
+        "stride": 2,
+        "midplane_half_width": 10.0,
+        "top_half_width": 500.0,
+    }
+
 
 def test_parallel_suite_reduction_preserves_model_order(monkeypatch, tmp_path):
     observed = {}
