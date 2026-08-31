@@ -73,7 +73,10 @@ def time_average(time, values, bounds=DEFAULT_SFR_RANGE):
     interior = (time > lower) & (time < upper)
     sample_time = np.r_[lower, time[interior], upper]
     sample_values = np.interp(sample_time, time, values)
-    return float(np.trapz(sample_values, sample_time) / (upper - lower))
+    trapezoid = getattr(np, "trapezoid", None)
+    if trapezoid is None:
+        trapezoid = np.trapz
+    return float(trapezoid(sample_values, sample_time) / (upper - lower))
 
 
 def model_mean_sfr(model, bounds=DEFAULT_SFR_RANGE, max_rows=10000):
