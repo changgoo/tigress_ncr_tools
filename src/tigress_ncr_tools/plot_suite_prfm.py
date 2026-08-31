@@ -1197,6 +1197,7 @@ def render_suite_prfm(
     midplane_half_width=10.0,
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
     cmap_name=DEFAULT_CMAP,
+    parameter_colors=True,
     dpi=180,
     overwrite=False,
 ):
@@ -1358,7 +1359,8 @@ def render_suite_prfm(
     print(f"Wrote {vertical_total_gas}", flush=True)
     print(f"Wrote {balance}", flush=True)
     print(f"Wrote {components}", flush=True)
-    for field, scale, parameter_cmap_name, colorbar_label in PARAMETER_COLOR_SPECS:
+    color_specs = PARAMETER_COLOR_SPECS if parameter_colors else ()
+    for field, scale, parameter_cmap_name, colorbar_label in color_specs:
         values = summary[field].to_numpy(dtype=float)
         parameter_cmap, parameter_norm = sfr_colormap(
             values, parameter_cmap_name, scale
@@ -1456,6 +1458,7 @@ def main(argv=None):
     parser.add_argument("--top-half-width", type=float, default=DEFAULT_TOP_HALF_WIDTH)
     parser.add_argument("--cmap", default=DEFAULT_CMAP)
     parser.add_argument("--dpi", type=int, default=180)
+    parser.add_argument("--skip-parameter-colors", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     if args.stop <= args.start:
@@ -1482,6 +1485,7 @@ def main(argv=None):
         midplane_half_width=args.midplane_half_width,
         top_half_width=args.top_half_width,
         cmap_name=args.cmap,
+        parameter_colors=not args.skip_parameter_colors,
         dpi=args.dpi,
         overwrite=args.overwrite,
     )

@@ -6,6 +6,8 @@ import pandas as pd
 
 matplotlib.use("Agg")
 
+import tigress_ncr_tools.plot_suite_prfm as prfm_module
+
 from tigress_ncr_tools.plot_suite_hst_evolution import sfr_colormap
 from tigress_ncr_tools.plot_suite_prfm import (
     PARAMETER_COLOR_SPECS,
@@ -23,6 +25,17 @@ from tigress_ncr_tools.plot_suite_prfm import (
     prfm_parameter_correlations,
     summarize_prfm,
 )
+
+
+def test_main_can_skip_parameter_color_variants(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_render(suite, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(prfm_module, "render_suite_prfm", fake_render)
+    prfm_module.main([str(tmp_path), "--skip-parameter-colors"])
+    assert captured["parameter_colors"] is False
 
 
 def _write_zprof(path, time, fields, rows):

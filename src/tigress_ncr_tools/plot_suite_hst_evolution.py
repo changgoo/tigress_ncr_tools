@@ -541,6 +541,7 @@ def render_history_evolution(
     cmap_name=DEFAULT_CMAP,
     color_scale="log",
     yscale="linear",
+    parameter_colors=True,
     dpi=180,
 ):
     """Rank models by mean SFR and write all history-evolution products."""
@@ -572,7 +573,8 @@ def render_history_evolution(
     print(f"Wrote {png}")
     print(f"Wrote {output_dir / 'model_sfr_colors.csv'}")
     parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
-    for field, scale, parameter_cmap, colorbar_label in HISTORY_PARAMETER_COLOR_SPECS:
+    color_specs = HISTORY_PARAMETER_COLOR_SPECS if parameter_colors else ()
+    for field, scale, parameter_cmap, colorbar_label in color_specs:
         parameter_ranked = [
             (model, parameters[model.name][field]) for model, _ in ranked
         ]
@@ -635,6 +637,7 @@ def main(argv=None):
     parser.add_argument("--color-scale", choices=("log", "linear"), default="log")
     parser.add_argument("--yscale", choices=("linear", "log"), default="linear")
     parser.add_argument("--dpi", type=int, default=180)
+    parser.add_argument("--skip-parameter-colors", action="store_true")
     args = parser.parse_args(argv)
     if args.stop <= args.start:
         parser.error("--stop must be greater than --start")
@@ -655,6 +658,7 @@ def main(argv=None):
         cmap_name=args.cmap,
         color_scale=args.color_scale,
         yscale=args.yscale,
+        parameter_colors=not args.skip_parameter_colors,
         dpi=args.dpi,
     )
 

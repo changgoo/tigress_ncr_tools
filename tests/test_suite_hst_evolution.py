@@ -6,6 +6,8 @@ import pytest
 
 matplotlib.use("Agg")
 
+import tigress_ncr_tools.plot_suite_hst_evolution as hst_module
+
 from tigress_ncr_tools.plot_suite_hst_evolution import (
     DERIVED_VELOCITY_QUANTITIES,
     HISTORY_PARAMETER_COLOR_SPECS,
@@ -21,6 +23,17 @@ from tigress_ncr_tools.plot_suite_hst_evolution import (
     write_velocity_summary,
     write_model_colors,
 )
+
+
+def test_main_can_skip_parameter_color_variants(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_render(suite, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(hst_module, "render_history_evolution", fake_render)
+    hst_module.main([str(tmp_path), "--skip-parameter-colors"])
+    assert captured["parameter_colors"] is False
 
 
 def test_characteristic_speed_masks_invalid_values():
