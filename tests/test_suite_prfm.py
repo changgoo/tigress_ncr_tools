@@ -34,8 +34,38 @@ def test_main_can_skip_parameter_color_variants(monkeypatch, tmp_path):
         captured.update(kwargs)
 
     monkeypatch.setattr(prfm_module, "render_suite_prfm", fake_render)
-    prfm_module.main([str(tmp_path), "--skip-parameter-colors"])
+    prfm_module.main(
+        [str(tmp_path), "--skip-parameter-colors", "--workers", "3"]
+    )
     assert captured["parameter_colors"] is False
+    assert captured["workers"] == 3
+
+def test_parallel_suite_reduction_preserves_model_order(monkeypatch, tmp_path):
+    observed = {}
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            observed["workers"] = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def map(self, function, tasks):
+            return [function(task) for task in tasks]
+
+    def fake_reduce(task):
+        return pd.DataFrame({"model": [Path(task[0]).name], "time": [0.0]})
+
+    monkeypatch.setattr(prfm_module, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(prfm_module, "_reduce_model_prfm_task", fake_reduce)
+    ranked = [(tmp_path / "second", 2.0), (tmp_path / "first", 1.0)]
+    result = prfm_module.reduce_suite_prfm(ranked, workers=4)
+    assert observed["workers"] == 4
+    assert result["model"].tolist() == ["second", "first"]
+
 
 
 def _write_zprof(path, time, fields, rows):

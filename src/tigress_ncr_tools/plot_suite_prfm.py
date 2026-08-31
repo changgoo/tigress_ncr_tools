@@ -2,8 +2,9 @@
 """Build pressure-regulated feedback diagnostics from suite z-profiles."""
 
 import argparse
-import re
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import re
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -583,6 +584,28 @@ def reduce_model_prfm(
     return time_series
 
 
+def _reduce_model_prfm_task(task):
+    """Process-pool entry point for one model reduction."""
+    (
+        model,
+        time_bounds,
+        stride,
+        midplane_half_width,
+        top_half_width,
+        return_profiles,
+        profile_time_bounds,
+    ) = task
+    return reduce_model_prfm(
+        model,
+        time_bounds=time_bounds,
+        stride=stride,
+        midplane_half_width=midplane_half_width,
+        top_half_width=top_half_width,
+        return_profiles=return_profiles,
+        profile_time_bounds=profile_time_bounds,
+    )
+
+
 def reduce_suite_prfm(
     ranked,
     *,
@@ -592,24 +615,41 @@ def reduce_suite_prfm(
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
     return_profiles=False,
     profile_time_bounds=None,
+    workers=1,
 ):
     """Reduce every ranked model to one concatenated time-series table."""
+    if workers <= 0:
+        raise ValueError("workers must be positive")
     frames = []
     profile_frames = []
-    for model_index, (model, _) in enumerate(ranked, start=1):
-        print(
-            f"Reducing {model.name} ({model_index}/{len(ranked)} models)",
-            flush=True,
-        )
-        reduced = reduce_model_prfm(
+    tasks = [
+        (
             model,
-            time_bounds=time_bounds,
-            stride=stride,
-            midplane_half_width=midplane_half_width,
-            top_half_width=top_half_width,
-            return_profiles=return_profiles,
-            profile_time_bounds=profile_time_bounds,
+            time_bounds,
+            stride,
+            midplane_half_width,
+            top_half_width,
+            return_profiles,
+            profile_time_bounds,
         )
+        for model, _ in ranked
+    ]
+    if workers == 1:
+        reduced_models = []
+        for model_index, task in enumerate(tasks, start=1):
+            print(
+                f"Reducing {Path(task[0]).name} "
+                f"({model_index}/{len(tasks)} models)",
+                flush=True,
+            )
+            reduced_models.append(_reduce_model_prfm_task(task))
+    else:
+        print(
+            f"Reducing {len(tasks)} models with {workers} workers", flush=True
+        )
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            reduced_models = list(executor.map(_reduce_model_prfm_task, tasks))
+    for reduced in reduced_models:
         if return_profiles:
             time_series, profiles = reduced
             frames.append(time_series)
@@ -1198,6 +1238,7 @@ def render_suite_prfm(
     top_half_width=DEFAULT_TOP_HALF_WIDTH,
     cmap_name=DEFAULT_CMAP,
     parameter_colors=True,
+    workers=1,
     dpi=180,
     overwrite=False,
 ):
@@ -1250,6 +1291,7 @@ def render_suite_prfm(
             top_half_width=top_half_width,
             return_profiles=True,
             profile_time_bounds=summary_bounds,
+            workers=workers,
         )
         _atomic_csv(time_series, time_series_path)
         _atomic_csv(profile_summary, profile_path)
@@ -1454,6 +1496,7 @@ def main(argv=None):
     parser.add_argument("--summary-start", type=float, default=DEFAULT_SUMMARY_RANGE[0])
     parser.add_argument("--summary-stop", type=float, default=DEFAULT_SUMMARY_RANGE[1])
     parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--midplane-half-width", type=float, default=10.0)
     parser.add_argument("--top-half-width", type=float, default=DEFAULT_TOP_HALF_WIDTH)
     parser.add_argument("--cmap", default=DEFAULT_CMAP)
@@ -1467,8 +1510,8 @@ def main(argv=None):
         parser.error("--summary-stop must be greater than --summary-start")
     if args.summary_start < args.start or args.summary_stop > args.stop:
         parser.error("summary window must lie within --start and --stop")
-    if args.stride <= 0:
-        parser.error("--stride must be positive")
+    if args.stride <= 0 or args.workers <= 0:
+        parser.error("--stride and --workers must be positive")
     if args.midplane_half_width <= 0.0:
         parser.error("--midplane-half-width must be positive")
     if args.top_half_width <= 0.0:
@@ -1486,6 +1529,7 @@ def main(argv=None):
         top_half_width=args.top_half_width,
         cmap_name=args.cmap,
         parameter_colors=not args.skip_parameter_colors,
+        workers=args.workers,
         dpi=args.dpi,
         overwrite=args.overwrite,
     )
