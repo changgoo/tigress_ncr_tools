@@ -176,11 +176,17 @@ def _atomic_savez(path, **data):
     temporary.replace(path)
 
 
-def model_power2d_archive(model, proj_id="theta0", quantity="gas"):
+def model_power2d_archive(
+    model, proj_id="theta0", quantity="gas", cache_root=None
+):
     """Return the per-model archive path for one quantity's 2D PSD series."""
     quantity_spec = projected_quantity(quantity)
     directory = f"{quantity_spec.slug}_power_2d"
-    return Path(model) / "proj2d" / proj_id / directory / POWER2D_ARCHIVE_NAME
+    if cache_root is None:
+        root = Path(model) / "proj2d" / proj_id
+    else:
+        root = Path(cache_root) / Path(model).name / proj_id
+    return root / directory / POWER2D_ARCHIVE_NAME
 
 
 def _power2d_archive_matches(
@@ -326,11 +332,14 @@ def load_or_generate_model_power2d(
     window,
     tukey_alpha,
     pad_factor,
+    cache_root=None,
     overwrite=False,
 ):
     """Load a compatible per-model 2D PSD series or generate it from maps."""
     quantity_spec = projected_quantity(quantity)
-    output = model_power2d_archive(model, proj_id, quantity_spec.key)
+    output = model_power2d_archive(
+        model, proj_id, quantity_spec.key, cache_root=cache_root
+    )
     if output.exists() and not overwrite:
         if _power2d_file_matches(
             output,
@@ -365,10 +374,13 @@ def _ensure_model_power2d(task):
         window,
         tukey_alpha,
         pad_factor,
+        cache_root,
         overwrite,
     ) = task
     quantity_spec = projected_quantity(quantity)
-    output = model_power2d_archive(model, proj_id, quantity_spec.key)
+    output = model_power2d_archive(
+        model, proj_id, quantity_spec.key, cache_root=cache_root
+    )
     if (
         output.exists()
         and not overwrite
@@ -410,6 +422,7 @@ def analyze_suite_power(
     pad_factor=1.0,
     overwrite_2d=False,
     workers=1,
+    cache_root=None,
     output=None,
 ):
     """Generate/load 2D PSD series, then annularly reduce every model."""
@@ -429,6 +442,7 @@ def analyze_suite_power(
             window,
             tukey_alpha,
             pad_factor,
+            cache_root,
             overwrite_2d,
         )
         for model, _ in ranked
@@ -523,7 +537,14 @@ def analyze_suite_power(
             str(np.asarray(two_dimensional["parameter_source"]).item())
         )
         power2d_archives.append(
-            str(model_power2d_archive(model, proj_id, quantity_spec.key))
+            str(
+                model_power2d_archive(
+                    model,
+                    proj_id,
+                    quantity_spec.key,
+                    cache_root=cache_root,
+                )
+            )
         )
 
     time = np.asarray(all_time)
@@ -1668,6 +1689,7 @@ def render_suite_density_spectrum(
     model_glob=DEFAULT_MODEL_GLOB,
     proj_id="theta0",
     output_dir=None,
+    cache_dir=None,
     start=DEFAULT_TIME_RANGE[0],
     stop=DEFAULT_TIME_RANGE[1],
     stride=1,
@@ -1702,9 +1724,13 @@ def render_suite_density_spectrum(
     ranked = rank_models_by_sfr(models, bounds=sfr_bounds, max_rows=10000)
     archive = output_dir / f"{quantity_spec.slug}_power_spectra.npz"
     missing_power2d = [
-        model_power2d_archive(model, proj_id, quantity_spec.key)
+        model_power2d_archive(
+            model, proj_id, quantity_spec.key, cache_root=cache_dir
+        )
         for model, _ in ranked
-        if not model_power2d_archive(model, proj_id, quantity_spec.key).exists()
+        if not model_power2d_archive(
+            model, proj_id, quantity_spec.key, cache_root=cache_dir
+        ).exists()
     ]
     rebuild_reduction = overwrite or overwrite_2d or bool(missing_power2d)
     if archive.exists() and not rebuild_reduction:
@@ -1756,6 +1782,7 @@ def render_suite_density_spectrum(
             pad_factor=pad_factor,
             overwrite_2d=overwrite_2d,
             workers=workers,
+            cache_root=cache_dir,
             output=archive,
         )
     parameters = {model.name: model_history_parameters(model) for model, _ in ranked}
@@ -1869,6 +1896,14 @@ def main(argv=None):
         "--quantity", choices=tuple(PROJECTED_QUANTITIES), default="gas"
     )
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help=(
+            "store per-model 2D PSD intermediates here instead of writing "
+            "inside the simulation model trees"
+        ),
+    )
     parser.add_argument("--start", type=int, default=DEFAULT_TIME_RANGE[0])
     parser.add_argument("--stop", type=int, default=DEFAULT_TIME_RANGE[1])
     parser.add_argument("--stride", type=int, default=1)
@@ -1909,6 +1944,7 @@ def main(argv=None):
         model_glob=args.model_glob,
         proj_id=args.projection,
         output_dir=args.output_dir,
+        cache_dir=args.cache_dir,
         start=args.start,
         stop=args.stop,
         stride=args.stride,

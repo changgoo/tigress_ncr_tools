@@ -94,6 +94,21 @@ def test_per_model_2d_archives_are_separate_by_quantity(tmp_path):
     assert len({gas, hi, em}) == 3
 
 
+def test_per_model_2d_archive_can_use_external_cache(tmp_path):
+    model = tmp_path / "suite" / "model-a"
+    cache = tmp_path / "cache"
+    result = model_power2d_archive(
+        model, proj_id="theta0", quantity="gas", cache_root=cache
+    )
+    assert result == (
+        cache
+        / "model-a"
+        / "theta0"
+        / "density_power_2d"
+        / "density_power_2d.npz"
+    )
+
+
 def test_time_mean_power_selects_requested_interval():
     data = {
         "model": np.array(["a", "b"]),
