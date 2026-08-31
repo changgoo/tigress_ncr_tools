@@ -7,6 +7,7 @@ import pytest
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import tigress_ncr_tools.plot_suite_density_pdf as density_pdf_module
 
 from tigress_ncr_tools.correlation_parameters import parameter_axis_limits
 from tigress_ncr_tools.plot_suite_density_pdf import (
@@ -29,6 +30,22 @@ from tigress_ncr_tools.plot_suite_hst_evolution import (
     SPEED_QUANTITIES,
     derived_velocity_quantities,
 )
+
+
+def test_main_forwards_explicit_phase_summary(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_render(suite, **kwargs):
+        captured["suite"] = suite
+        captured.update(kwargs)
+
+    phase_summary = tmp_path / "phase_model_summary.csv"
+    monkeypatch.setattr(density_pdf_module, "render_suite_density_pdf", fake_render)
+    density_pdf_module.main(
+        [str(tmp_path / "suite"), "--phase-summary", str(phase_summary)]
+    )
+    assert captured["suite"] == tmp_path / "suite"
+    assert captured["phase_summary_path"] == phase_summary
 
 
 def test_frame_density_pdf_normalizes_and_measures_pixels_directly():

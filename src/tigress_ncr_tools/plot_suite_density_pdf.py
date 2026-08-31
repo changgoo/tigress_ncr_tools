@@ -1155,6 +1155,7 @@ def render_suite_density_pdf(
     model_glob=DEFAULT_MODEL_GLOB,
     proj_id="theta0",
     output_dir=None,
+    phase_summary_path=None,
     start=DEFAULT_TIME_RANGE[0],
     stop=DEFAULT_TIME_RANGE[1],
     stride=1,
@@ -1234,7 +1235,12 @@ def render_suite_density_pdf(
         quantity_label=quantity_spec.label.capitalize(),
         dpi=dpi,
     )
-    phase_summary_path = suite / DEFAULT_PHASE_SUMMARY
+    phase_summary_required = phase_summary_path is not None
+    phase_summary_path = (
+        Path(phase_summary_path)
+        if phase_summary_required
+        else suite / DEFAULT_PHASE_SUMMARY
+    )
     phase_summary = None
     if phase_summary_path.is_file():
         phase_summary = load_phase_velocity_summary(phase_summary_path, summary)
@@ -1245,6 +1251,10 @@ def render_suite_density_pdf(
             summary_name,
             quantity_label=quantity_spec.label.capitalize(),
             dpi=dpi,
+        )
+    elif phase_summary_required:
+        raise FileNotFoundError(
+            f"explicit phase summary does not exist: {phase_summary_path}"
         )
     else:
         print(
@@ -1286,6 +1296,11 @@ def main(argv=None):
         "--quantity", choices=tuple(PROJECTED_QUANTITIES), default="gas"
     )
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--phase-summary",
+        type=Path,
+        help="explicit phase_model_summary.csv used for phase correlations",
+    )
     parser.add_argument("--start", type=int, default=DEFAULT_TIME_RANGE[0])
     parser.add_argument("--stop", type=int, default=DEFAULT_TIME_RANGE[1])
     parser.add_argument("--stride", type=int, default=1)
@@ -1334,6 +1349,7 @@ def main(argv=None):
         model_glob=args.model_glob,
         proj_id=args.projection,
         output_dir=args.output_dir,
+        phase_summary_path=args.phase_summary,
         start=args.start,
         stop=args.stop,
         stride=args.stride,
