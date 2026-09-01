@@ -2,6 +2,7 @@
 """PDFs and shear-aware power spectra of theta0 gas surface-density maps."""
 
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -24,6 +25,35 @@ DEFAULT_PDF_BINS = 100
 DEFAULT_K_BINS = 40
 STATISTICS_NAME = "surface_density_statistics.npz"
 NUMBER_PATTERN = r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][+\-]?\d+)?"
+
+
+def logarithmic_bin_edges(start, stop, bins):
+    """Return reproducible positive log-spaced bin edges.
+
+    NumPy 2 changed ``geomspace`` by a few ulps relative to NumPy 1. Fourier
+    modes can lie exactly on these edges, so those harmless edge changes can
+    move modes between neighboring annuli. Scalar powers plus a one-ulp
+    inward bias give the boundary a stable, explicit upper-bin convention.
+    """
+    start = float(start)
+    stop = float(stop)
+    bins = int(bins)
+    if not 0.0 < start < stop:
+        raise ValueError("logarithmic bin bounds must satisfy 0 < start < stop")
+    if bins < 1:
+        raise ValueError("logarithmic bins must be positive")
+    log_start = math.log10(start)
+    log_stop = math.log10(stop)
+    edges = np.asarray(
+        [
+            10.0 ** (log_start + (log_stop - log_start) * index / bins)
+            for index in range(bins + 1)
+        ]
+    )
+    edges[0] = start
+    edges[-1] = stop
+    edges[1:-1] = np.nextafter(edges[1:-1], 0.0)
+    return edges
 
 
 def read_athinput_section(path, section="problem"):
@@ -413,7 +443,7 @@ def default_k_edges(x_centers, y_centers, bins=DEFAULT_K_BINS):
     kmax = np.pi / max(dx, dy)
     if kmax <= kmin:
         raise ValueError("map is too small to define power-spectrum bins")
-    return np.geomspace(kmin, kmax, int(bins) + 1)
+    return logarithmic_bin_edges(kmin, kmax, bins)
 
 
 def frame_statistics(

@@ -11,6 +11,7 @@ from tigress_ncr_tools.surface_density_stats import (
     annular_power_statistics_2d,
     band_power_quadrupole_2d,
     centered_subregion,
+    logarithmic_bin_edges,
     pdfs_fluctuations,
     pdfs_log10_sigma,
     power_spectral_density_2d,
@@ -21,6 +22,20 @@ from tigress_ncr_tools.surface_density_stats import (
     shear_remap_periodic,
     window_1d,
 )
+
+
+def test_logarithmic_bin_edges_keep_boundary_modes_in_upper_bin():
+    kmin = 2.0 * np.pi / 1024.0
+    kmax = np.pi / 8.0
+    edges = logarithmic_bin_edges(kmin, kmax, 40)
+    boundary_modes = kmin * np.sqrt(np.asarray([8.0, 64.0, 512.0]))
+
+    np.testing.assert_array_equal(
+        np.digitize(boundary_modes, edges) - 1,
+        np.asarray([10, 20, 30]),
+    )
+    assert edges[0] == kmin
+    assert edges[-1] == kmax
 
 
 def test_read_shear_parameters_from_problem_section(tmp_path):

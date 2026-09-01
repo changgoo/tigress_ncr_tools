@@ -37,6 +37,7 @@ from .plot_suite_evolution import nearest_indexed_projection, time_average
 from .surface_density_stats import (
     annular_power_statistics_2d,
     band_power_quadrupole_2d,
+    logarithmic_bin_edges,
     read_shear_parameters,
 )
 
@@ -330,7 +331,7 @@ def common_k_edges_from_archives(archives, bins=DEFAULT_K_BINS):
     kmin = np.nextafter(kmin, 0.0)
     if not 0.0 < kmin < kmax:
         raise ValueError("box and pixel sizes do not define a common k range")
-    return np.geomspace(kmin, kmax, int(bins) + 1)
+    return logarithmic_bin_edges(kmin, kmax, bins)
 
 
 def analyze_box_size_power(

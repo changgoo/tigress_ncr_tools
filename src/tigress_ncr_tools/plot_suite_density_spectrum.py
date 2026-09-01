@@ -42,6 +42,7 @@ from .surface_density_stats import (
     annular_power_statistics_2d,
     band_power_quadrupole_2d,
     default_k_edges,
+    logarithmic_bin_edges,
     power_spectral_density_2d,
     read_shear_parameters,
     residual_shear,
@@ -484,7 +485,7 @@ def analyze_suite_power(
         if common_k_edges is None:
             kmin = 2.0 * np.pi / np.min(box_size_xy)
             kmax = np.pi / np.max(pixel_size_xy)
-            common_k_edges = np.geomspace(kmin, kmax, int(k_bins) + 1)
+            common_k_edges = logarithmic_bin_edges(kmin, kmax, k_bins)
         powers = []
         counts = []
         quadrupoles = []
