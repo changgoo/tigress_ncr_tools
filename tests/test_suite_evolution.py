@@ -11,6 +11,8 @@ from tigress_ncr_tools.plot_suite_evolution import (
     create_phase_grid_figure,
     hydrogen_phase_rgb,
     nearest_projection_paths,
+    panel_position,
+    perceptual_channel_gains,
     projection_path,
     short_model_name,
     time_average,
@@ -65,7 +67,7 @@ def test_projection_path_and_short_name(tmp_path):
     assert short_model_name(model) == "row0010"
 
 
-def test_grid_figure_is_row_major_and_reusable(tmp_path):
+def test_grid_figure_is_column_major_and_reusable(tmp_path):
     ranked = [
         (Path(f"R8_8pc_NCR_row{index:04d}"), float(4 - index))
         for index in range(4)
@@ -75,8 +77,10 @@ def test_grid_figure_is_row_major_and_reusable(tmp_path):
         ranked, maps, 12.0, nrows=2, ncols=2
     )
     assert len(images) == 4
-    assert "01 row0000" in fig.axes[0].texts[0].get_text()
-    assert "04 row0003" in fig.axes[3].texts[0].get_text()
+    assert "0000" in fig.axes[0].texts[0].get_text()
+    assert "0001" in fig.axes[2].texts[0].get_text()
+    assert "0002" in fig.axes[1].texts[0].get_text()
+    assert "0003" in fig.axes[3].texts[0].get_text()
     update_grid_figure(images, time_text, maps[::-1], 13.0)
     assert np.all(images[0].get_array() == 4.0)
     assert "13.0" in time_text.get_text()
@@ -85,8 +89,21 @@ def test_grid_figure_is_row_major_and_reusable(tmp_path):
     order = tmp_path / "model_order.csv"
     write_model_order(ranked, order)
     lines = order.read_text().splitlines()
-    assert lines[0] == "rank,model,mean_sfr10,time_start,time_stop"
-    assert lines[1].startswith("1,R8_8pc_NCR_row0000,4,")
+    assert lines[0] == (
+        "rank,panel_row,panel_column,model,mean_sfr10,time_start,time_stop"
+    )
+    assert lines[1].startswith("1,1,1,R8_8pc_NCR_row0000,4,")
+    assert lines[2].startswith("2,2,1,R8_8pc_NCR_row0001,3,")
+
+
+def test_panel_position_and_rgb_gains_record_shared_layout_conventions():
+    assert [panel_position(index, 4) for index in range(5)] == [
+        (0, 0), (1, 0), (2, 0), (3, 0), (0, 1)
+    ]
+    np.testing.assert_allclose(
+        perceptual_channel_gains("bt709"),
+        [1.0, 0.2126 / 0.7152, 0.5 * 0.2126 / 0.0722],
+    )
 
 
 def test_hydrogen_phase_rgb_counts_nuclei_and_uses_fixed_stretch(monkeypatch):
@@ -127,7 +144,8 @@ def test_phase_grid_figure_is_reusable():
         ranked, maps, 12.0, nrows=2, ncols=2, scale=25.0, asinh_q=10.0
     )
     assert len(images) == 4
-    assert "01 row0000" in fig.axes[0].texts[0].get_text()
+    assert "0000" in fig.axes[0].texts[0].get_text()
+    assert "0001" in fig.axes[2].texts[0].get_text()
     assert any("2" in text.get_text() for text in fig.texts)
     update_phase_grid_figure(images, time_text, maps[::-1], 13.0)
     assert np.allclose(images[0].get_array(), 0.75)

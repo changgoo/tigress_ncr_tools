@@ -5,7 +5,6 @@ import argparse
 import csv
 from pathlib import Path
 
-import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm
@@ -21,10 +20,38 @@ DEFAULT_SUITE = Path("/tigress/changgoo/anvil/TIGRESS-NCR-suite")
 DEFAULT_MODEL_GLOB = "R8_8pc_NCR_row????"
 DEFAULT_OUTPUT_NAME = "surface_density_evolution_theta0"
 DEFAULT_PHASE_OUTPUT_NAME = "hydrogen_phase_evolution_theta0"
-DEFAULT_SFR_RANGE = (200.0, 600.0)
+DEFAULT_SFR_RANGE = (400.0, 600.0)
 DEFAULT_PHASE_SCALE = 25.0
 DEFAULT_ASINH_Q = 10.0
-DEFAULT_HI_GREEN_SCALE = 0.65
+DEFAULT_HI_GREEN_SCALE = 1.0
+DEFAULT_BLUE_GAIN_FACTOR = 0.5
+LUMA_WEIGHTS = {
+    "bt709": np.array((0.2126, 0.7152, 0.0722)),
+    "bt601": np.array((0.2990, 0.5870, 0.1140)),
+    "none": np.ones(3),
+}
+
+
+def panel_position(index, nrows=4):
+    """Return the column-major panel position for a zero-based SFR rank."""
+    if index < 0 or nrows <= 0:
+        raise ValueError("index must be nonnegative and nrows must be positive")
+    return index % nrows, index // nrows
+
+
+def perceptual_channel_gains(
+    weighting="bt709", blue_gain_factor=DEFAULT_BLUE_GAIN_FACTOR
+):
+    """Return inverse-luma gains with red fixed and adjustable blue gain."""
+    try:
+        weights = LUMA_WEIGHTS[weighting]
+    except KeyError as error:
+        raise ValueError(f"unknown RGB weighting: {weighting}") from error
+    if blue_gain_factor < 0:
+        raise ValueError("blue gain factor must be non-negative")
+    gains = weights[0] / weights
+    gains[2] *= blue_gain_factor
+    return gains
 
 
 def discover_evolution_models(suite, model_glob=DEFAULT_MODEL_GLOB, proj_id="theta0"):
@@ -192,13 +219,19 @@ def nearest_projection_paths(
 
 
 def load_surface_density_maps(paths):
-    """Load nH projections and convert them to Msun/pc^2."""
+    """Load normalized nH projections and their means in Msun/pc^2."""
     surface_density_unit = star_particle_units()["mass_msun"]
     maps = []
+    means = []
     for path in paths:
         frame = read_proj2d(path, fields="nH")
-        maps.append(np.asarray(frame["fields"]["nH"]) * surface_density_unit)
-    return maps
+        values = np.asarray(frame["fields"]["nH"], dtype=float)
+        mean = float(np.mean(values))
+        if not np.isfinite(mean) or mean <= 0:
+            raise ValueError(f"mean surface density must be positive for {path}")
+        maps.append(values / mean)
+        means.append(mean * surface_density_unit)
+    return maps, np.asarray(means)
 
 
 def hydrogen_phase_rgb(
@@ -243,22 +276,30 @@ def load_hydrogen_phase_maps(
     scale=DEFAULT_PHASE_SCALE,
     asinh_q=DEFAULT_ASINH_Q,
     hi_green_scale=DEFAULT_HI_GREEN_SCALE,
+    channel_gains=None,
 ):
-    """Load proj2d fields and form fixed-stretch H-phase RGB maps."""
+    """Load fixed-stretch H-phase RGB maps and total-gas spatial means."""
     maps = []
+    means = []
+    surface_density_unit = star_particle_units()["mass_msun"]
+    if channel_gains is None:
+        channel_gains = np.ones(3)
+    channel_gains = np.asarray(channel_gains, dtype=float)
+    if channel_gains.shape != (3,) or np.any(channel_gains < 0):
+        raise ValueError("channel gains must be three non-negative values")
     for path in paths:
         fields = read_proj2d(path, fields=("nH", "nHI", "nH2"))["fields"]
-        maps.append(
-            hydrogen_phase_rgb(
-                fields["nH"],
-                fields["nHI"],
-                fields["nH2"],
-                scale=scale,
-                asinh_q=asinh_q,
-                hi_green_scale=hi_green_scale,
-            )
+        rgb = hydrogen_phase_rgb(
+            fields["nH"],
+            fields["nHI"],
+            fields["nH2"],
+            scale=scale,
+            asinh_q=asinh_q,
+            hi_green_scale=hi_green_scale,
         )
-    return maps
+        maps.append(np.clip(rgb * channel_gains, 0.0, 1.0))
+        means.append(float(np.mean(fields["nH"]) * surface_density_unit))
+    return maps, np.asarray(means)
 
 
 def short_model_name(model):
@@ -273,10 +314,11 @@ def create_grid_figure(
     maps,
     time,
     *,
+    mean_sigma_gas=None,
     nrows=4,
     ncols=8,
     vmin=0.1,
-    vmax=100.0,
+    vmax=10.0,
     cmap="managua_r",
 ):
     """Create the shared-scale grid and return figure artists for reuse."""
@@ -284,22 +326,29 @@ def create_grid_figure(
         raise ValueError("ranked models and maps must have equal lengths")
     if len(ranked) > nrows * ncols:
         raise ValueError(f"{len(ranked)} models do not fit in a {nrows}x{ncols} grid")
+    if mean_sigma_gas is None:
+        mean_sigma_gas = np.ones(len(ranked))
+    mean_sigma_gas = np.asarray(mean_sigma_gas, dtype=float)
+    if mean_sigma_gas.shape != (len(ranked),):
+        raise ValueError("mean surface densities must align with ranked models")
     if vmin <= 0 or vmax <= vmin:
         raise ValueError("require 0 < vmin < vmax")
 
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(2.25 * ncols, 2.25 * nrows + 0.45),
+        figsize=(2.05 * ncols, 2.05 * nrows + 0.5),
         squeeze=False,
+        gridspec_kw={"hspace": 0.025, "wspace": 0.025},
     )
     norm = LogNorm(vmin=vmin, vmax=vmax)
     images = []
-    text_effect = [path_effects.withStroke(linewidth=1.8, foreground="black")]
-    for rank, (axis, item, data) in enumerate(
-        zip(axes.flat, ranked, maps), start=1
+    for index, (item, data, mean_gas) in enumerate(
+        zip(ranked, maps, mean_sigma_gas)
     ):
         model, mean_sfr = item
+        row, column = panel_position(index, nrows)
+        axis = axes[row, column]
         image = axis.imshow(
             data,
             origin="lower",
@@ -308,47 +357,77 @@ def create_grid_figure(
             interpolation="nearest",
         )
         images.append(image)
-        axis.text(
+        annotation_prefix = (
+            f"{Path(model).name.rsplit('_row', 1)[-1]}\n"
+            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle={mean_sfr:.2e}$"
+        )
+        annotation = axis.text(
             0.025,
             0.975,
-            f"{rank:02d} {short_model_name(model)}\n"
-            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle={mean_sfr:.2e}$",
+            annotation_prefix + "\n"
+            rf"$\langle\Sigma_{{\rm gas}}\rangle={mean_gas:.1f}\,"
+            rf"M_\odot\,{{\rm pc}}^{{-2}}$",
             transform=axis.transAxes,
             color="white",
             fontsize=7.2,
             ha="left",
             va="top",
             linespacing=1.15,
-            path_effects=text_effect,
+            bbox={
+                "facecolor": "black", "edgecolor": "none",
+                "alpha": 0.35, "pad": 1.0,
+            },
         )
+        image._suite_annotation = annotation
+        image._suite_annotation_prefix = annotation_prefix
         axis.set_axis_off()
-    for axis in axes.flat[len(ranked):]:
-        axis.set_axis_off()
+    used = {panel_position(index, nrows) for index in range(len(ranked))}
+    for row, column in np.ndindex(axes.shape):
+        if (row, column) not in used:
+            axes[row, column].set_axis_off()
 
-    time_text = fig.suptitle(rf"Total gas surface density: $t={time:.1f}$", y=0.995)
-    color_axis = fig.add_axes((0.32, 0.022, 0.36, 0.018))
-    colorbar = fig.colorbar(images[0], cax=color_axis, orientation="horizontal")
-    colorbar.set_label(r"$\Sigma_{\rm gas}\;[M_\odot\,{\rm pc}^{-2}]$", labelpad=1)
-    colorbar.ax.xaxis.set_label_position("top")
-    colorbar.ax.tick_params(labelsize=8, pad=1)
+    time_text = fig.suptitle(
+        rf"Face-on gas surface-density contrast at $t={time:.1f}\,{{\rm Myr}}$: "
+        r"$\delta_\Sigma\equiv\Sigma_{\rm gas}/"
+        r"\langle\Sigma_{\rm gas}\rangle-1$",
+        y=0.995,
+    )
+    color_axis = fig.add_axes((0.972, 0.12, 0.012, 0.74))
+    colorbar = fig.colorbar(images[0], cax=color_axis)
+    colorbar.set_label(
+        r"$1+\delta_\Sigma=\Sigma_{\rm gas}/"
+        r"\langle\Sigma_{\rm gas}\rangle$"
+    )
     fig.subplots_adjust(
         left=0.006,
-        right=0.994,
-        bottom=0.085,
-        top=0.96,
-        wspace=0.018,
-        hspace=0.018,
+        right=0.962,
+        bottom=0.012,
+        top=0.94,
     )
     return fig, images, time_text
 
 
-def update_grid_figure(images, time_text, maps, time):
+def update_grid_figure(images, time_text, maps, time, mean_sigma_gas=None):
     """Update a reusable grid figure for the next output."""
     if len(images) != len(maps):
         raise ValueError("images and maps must have equal lengths")
-    for image, data in zip(images, maps):
+    if mean_sigma_gas is None:
+        mean_sigma_gas = [None] * len(images)
+    if len(mean_sigma_gas) != len(images):
+        raise ValueError("mean surface densities must align with images")
+    for image, data, mean_gas in zip(images, maps, mean_sigma_gas):
         image.set_data(data)
-    time_text.set_text(rf"Total gas surface density: $t={time:.1f}$")
+        if mean_gas is not None:
+            image._suite_annotation.set_text(
+                image._suite_annotation_prefix + "\n"
+                rf"$\langle\Sigma_{{\rm gas}}\rangle={mean_gas:.1f}\,"
+                rf"M_\odot\,{{\rm pc}}^{{-2}}$"
+            )
+    time_text.set_text(
+        rf"Face-on gas surface-density contrast at $t={time:.1f}\,{{\rm Myr}}$: "
+        r"$\delta_\Sigma\equiv\Sigma_{\rm gas}/"
+        r"\langle\Sigma_{\rm gas}\rangle-1$"
+    )
 
 
 def create_phase_grid_figure(
@@ -356,49 +435,73 @@ def create_phase_grid_figure(
     maps,
     time,
     *,
+    mean_sigma_gas=None,
     nrows=4,
     ncols=8,
     scale=DEFAULT_PHASE_SCALE,
     asinh_q=DEFAULT_ASINH_Q,
+    rgb_weighting="bt709",
+    blue_gain_factor=DEFAULT_BLUE_GAIN_FACTOR,
 ):
     """Create the ranked H2/HI/HII pseudocolor grid."""
     if len(ranked) != len(maps):
         raise ValueError("ranked models and maps must have equal lengths")
     if len(ranked) > nrows * ncols:
         raise ValueError(f"{len(ranked)} models do not fit in a {nrows}x{ncols} grid")
+    if mean_sigma_gas is None:
+        mean_sigma_gas = np.ones(len(ranked))
+    mean_sigma_gas = np.asarray(mean_sigma_gas, dtype=float)
+    if mean_sigma_gas.shape != (len(ranked),):
+        raise ValueError("mean surface densities must align with ranked models")
 
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(2.25 * ncols, 2.25 * nrows + 0.45),
+        figsize=(2.05 * ncols, 2.05 * nrows + 0.5),
         squeeze=False,
+        gridspec_kw={"hspace": 0.025, "wspace": 0.025},
     )
     images = []
-    text_effect = [path_effects.withStroke(linewidth=1.8, foreground="black")]
-    for rank, (axis, item, data) in enumerate(
-        zip(axes.flat, ranked, maps), start=1
+    for index, (item, data, mean_gas) in enumerate(
+        zip(ranked, maps, mean_sigma_gas)
     ):
         model, mean_sfr = item
+        row, column = panel_position(index, nrows)
+        axis = axes[row, column]
         image = axis.imshow(data, origin="lower", interpolation="nearest")
         images.append(image)
-        axis.text(
+        annotation_prefix = (
+            f"{Path(model).name.rsplit('_row', 1)[-1]}\n"
+            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle={mean_sfr:.2e}$"
+        )
+        annotation = axis.text(
             0.025,
             0.975,
-            f"{rank:02d} {short_model_name(model)}\n"
-            rf"$\langle\Sigma_{{\rm SFR,10}}\rangle={mean_sfr:.2e}$",
+            annotation_prefix + "\n"
+            rf"$\langle\Sigma_{{\rm gas}}\rangle={mean_gas:.1f}\,"
+            rf"M_\odot\,{{\rm pc}}^{{-2}}$",
             transform=axis.transAxes,
             color="white",
             fontsize=7.2,
             ha="left",
             va="top",
             linespacing=1.15,
-            path_effects=text_effect,
+            bbox={
+                "facecolor": "black", "edgecolor": "none",
+                "alpha": 0.35, "pad": 1.0,
+            },
         )
+        image._suite_annotation = annotation
+        image._suite_annotation_prefix = annotation_prefix
         axis.set_axis_off()
-    for axis in axes.flat[len(ranked):]:
-        axis.set_axis_off()
+    used = {panel_position(index, nrows) for index in range(len(ranked))}
+    for row, column in np.ndindex(axes.shape):
+        if (row, column) not in used:
+            axes[row, column].set_axis_off()
 
-    time_text = fig.suptitle(rf"Hydrogen phases: $t={time:.1f}$", y=0.995)
+    time_text = fig.suptitle(
+        rf"Face-on hydrogen species at $t={time:.1f}\,{{\rm Myr}}$", y=0.995
+    )
     legend_y = 0.027
     fig.text(0.365, legend_y, r"$2\mathrm{H}_2$", color="#ff3030", ha="right")
     fig.text(0.405, legend_y, "/", color="0.3", ha="center")
@@ -409,39 +512,57 @@ def create_phase_grid_figure(
         0.555,
         legend_y,
         rf"(R/G/B; asinh $Q={asinh_q:g}$, scale={scale:g} "
-        rf"$M_\odot\,\mathrm{{pc}}^{{-2}}$)",
+        rf"$M_\odot\,\mathrm{{pc}}^{{-2}}$; {rgb_weighting.upper()}, "
+        rf"blue $\times {blue_gain_factor:g}$)",
         color="0.25",
         ha="left",
         fontsize=8,
     )
     fig.subplots_adjust(
-        left=0.006,
-        right=0.994,
+        left=0.012,
+        right=0.988,
         bottom=0.065,
-        top=0.96,
-        wspace=0.018,
-        hspace=0.018,
+        top=0.94,
     )
     return fig, images, time_text
 
 
-def update_phase_grid_figure(images, time_text, maps, time):
+def update_phase_grid_figure(images, time_text, maps, time, mean_sigma_gas=None):
     """Update a reusable H-phase pseudocolor grid."""
     if len(images) != len(maps):
         raise ValueError("images and maps must have equal lengths")
-    for image, data in zip(images, maps):
+    if mean_sigma_gas is None:
+        mean_sigma_gas = [None] * len(images)
+    if len(mean_sigma_gas) != len(images):
+        raise ValueError("mean surface densities must align with images")
+    for image, data, mean_gas in zip(images, maps, mean_sigma_gas):
         image.set_data(data)
-    time_text.set_text(rf"Hydrogen phases: $t={time:.1f}$")
+        if mean_gas is not None:
+            image._suite_annotation.set_text(
+                image._suite_annotation_prefix + "\n"
+                rf"$\langle\Sigma_{{\rm gas}}\rangle={mean_gas:.1f}\,"
+                rf"M_\odot\,{{\rm pc}}^{{-2}}$"
+            )
+    time_text.set_text(
+        rf"Face-on hydrogen species at $t={time:.1f}\,{{\rm Myr}}$"
+    )
 
 
-def write_model_order(ranked, path, bounds=DEFAULT_SFR_RANGE):
+def write_model_order(ranked, path, bounds=DEFAULT_SFR_RANGE, nrows=4):
     """Write the exact panel ordering and ranking statistic."""
     path = Path(path)
     with path.open("w", newline="") as stream:
         writer = csv.writer(stream)
-        writer.writerow(("rank", "model", "mean_sfr10", "time_start", "time_stop"))
+        writer.writerow(
+            ("rank", "panel_row", "panel_column", "model", "mean_sfr10",
+             "time_start", "time_stop")
+        )
         for rank, (model, mean_sfr) in enumerate(ranked, start=1):
-            writer.writerow((rank, model.name, f"{mean_sfr:.12g}", bounds[0], bounds[1]))
+            row, column = panel_position(rank - 1, nrows)
+            writer.writerow(
+                (rank, row + 1, column + 1, model.name, f"{mean_sfr:.12g}",
+                 bounds[0], bounds[1])
+            )
 
 
 def make_grid_movie(output_dir, frame_stem, movie_path, fps=30.0):
@@ -494,7 +615,7 @@ def render_surface_density_evolution(
     nrows=4,
     ncols=8,
     vmin=0.1,
-    vmax=100.0,
+    vmax=10.0,
     cmap="managua_r",
     dpi=150,
     overwrite=False,
@@ -512,7 +633,9 @@ def render_surface_density_evolution(
             f"expected exactly {nrows * ncols} models for a {nrows}x{ncols} grid, "
             f"found {len(ranked)}"
         )
-    write_model_order(ranked, output_dir / "model_order.csv", sfr_bounds)
+    write_model_order(
+        ranked, output_dir / "model_order.csv", sfr_bounds, nrows=nrows
+    )
     projection_indices = [
         projection_number_index(model, proj_id)
         for model, _ in ranked
@@ -530,7 +653,7 @@ def render_surface_density_evolution(
             paths, times, guess_offsets = nearest_projection_paths(
                 projection_indices, output_number, guess_offsets
             )
-            maps = load_surface_density_maps(paths)
+            maps, mean_sigma_gas = load_surface_density_maps(paths)
             if np.ptp(times) > 0.05:
                 detail = ", ".join(f"{value:g}" for value in times)
                 raise ValueError(f"output {output_number:04d} is not time-aligned: {detail}")
@@ -540,6 +663,7 @@ def render_surface_density_evolution(
                     ranked,
                     maps,
                     time,
+                    mean_sigma_gas=mean_sigma_gas,
                     nrows=nrows,
                     ncols=ncols,
                     vmin=vmin,
@@ -547,7 +671,9 @@ def render_surface_density_evolution(
                     cmap=cmap,
                 )
             else:
-                update_grid_figure(images, time_text, maps, time)
+                update_grid_figure(
+                    images, time_text, maps, time, mean_sigma_gas
+                )
             fig.savefig(output, dpi=dpi, facecolor="white")
             written.append(output)
             print(f"Wrote {output}", flush=True)
@@ -578,6 +704,8 @@ def render_hydrogen_phase_evolution(
     scale=DEFAULT_PHASE_SCALE,
     asinh_q=DEFAULT_ASINH_Q,
     hi_green_scale=DEFAULT_HI_GREEN_SCALE,
+    rgb_weighting="bt709",
+    blue_gain_factor=DEFAULT_BLUE_GAIN_FACTOR,
     dpi=150,
     overwrite=False,
     movie=False,
@@ -594,7 +722,9 @@ def render_hydrogen_phase_evolution(
             f"expected exactly {nrows * ncols} models for a {nrows}x{ncols} grid, "
             f"found {len(ranked)}"
         )
-    write_model_order(ranked, output_dir / "model_order.csv", sfr_bounds)
+    write_model_order(
+        ranked, output_dir / "model_order.csv", sfr_bounds, nrows=nrows
+    )
     projection_indices = [
         projection_number_index(model, proj_id)
         for model, _ in ranked
@@ -612,11 +742,14 @@ def render_hydrogen_phase_evolution(
             paths, times, guess_offsets = nearest_projection_paths(
                 projection_indices, output_number, guess_offsets
             )
-            maps = load_hydrogen_phase_maps(
+            maps, mean_sigma_gas = load_hydrogen_phase_maps(
                 paths,
                 scale=scale,
                 asinh_q=asinh_q,
                 hi_green_scale=hi_green_scale,
+                channel_gains=perceptual_channel_gains(
+                    rgb_weighting, blue_gain_factor
+                ),
             )
             if np.ptp(times) > 0.05:
                 detail = ", ".join(f"{value:g}" for value in times)
@@ -627,13 +760,18 @@ def render_hydrogen_phase_evolution(
                     ranked,
                     maps,
                     time,
+                    mean_sigma_gas=mean_sigma_gas,
                     nrows=nrows,
                     ncols=ncols,
                     scale=scale,
                     asinh_q=asinh_q,
+                    rgb_weighting=rgb_weighting,
+                    blue_gain_factor=blue_gain_factor,
                 )
             else:
-                update_phase_grid_figure(images, time_text, maps, time)
+                update_phase_grid_figure(
+                    images, time_text, maps, time, mean_sigma_gas
+                )
             fig.savefig(output, dpi=dpi, facecolor="white")
             written.append(output)
             print(f"Wrote {output}", flush=True)
@@ -669,11 +807,17 @@ def main(argv=None):
     parser.add_argument("--rows", type=int, default=4)
     parser.add_argument("--cols", type=int, default=8)
     parser.add_argument("--vmin", type=float, default=0.1)
-    parser.add_argument("--vmax", type=float, default=100.0)
+    parser.add_argument("--vmax", type=float, default=10.0)
     parser.add_argument("--cmap", default="managua_r")
     parser.add_argument("--phase-scale", type=float, default=DEFAULT_PHASE_SCALE)
     parser.add_argument("--asinh-q", type=float, default=DEFAULT_ASINH_Q)
     parser.add_argument("--hi-green-scale", type=float, default=DEFAULT_HI_GREEN_SCALE)
+    parser.add_argument(
+        "--rgb-weighting", choices=tuple(LUMA_WEIGHTS), default="bt709"
+    )
+    parser.add_argument(
+        "--blue-gain-factor", type=float, default=DEFAULT_BLUE_GAIN_FACTOR
+    )
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--movie", action="store_true")
@@ -695,6 +839,8 @@ def main(argv=None):
         parser.error("--phase-scale and --asinh-q must be positive")
     if args.hi_green_scale < 0:
         parser.error("--hi-green-scale must be non-negative")
+    if args.blue_gain_factor < 0:
+        parser.error("--blue-gain-factor must be non-negative")
     if args.dpi <= 0 or args.fps <= 0:
         parser.error("--dpi and --fps must be positive")
     common = dict(
@@ -719,6 +865,8 @@ def main(argv=None):
             scale=args.phase_scale,
             asinh_q=args.asinh_q,
             hi_green_scale=args.hi_green_scale,
+            rgb_weighting=args.rgb_weighting,
+            blue_gain_factor=args.blue_gain_factor,
             **common,
         )
     else:

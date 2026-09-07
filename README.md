@@ -78,18 +78,22 @@ stellar midplane density, and mean SFR. The 4-by-3
 kinetic speed, 3D Alfvén speed, turbulent Mach number, and
 magnetic-pressure-corrected Mach number. Both use `plasma` mean-SFR colors.
 
-`plot-suite-evolution` writes the ranked 4x8 total-gas surface-density frames,
+`plot-suite-evolution` writes ranked 4-by-8 total-gas contrast frames,
 `model_order.csv`, and (with `--movie`) an MP4 beneath
 `SUITE/surface_density_evolution_theta0/`. Use `--map hydrogen-phases` for a
 fixed-stretch pseudocolor movie beneath `SUITE/hydrogen_phase_evolution_theta0/`:
 red is molecular hydrogen (`2H2`), green is atomic hydrogen (`HI`), and blue
 is ionized hydrogen (`HII`). All channels count hydrogen nuclei and share one
-physical surface-density stretch across every panel and time. The default
-phase settings are `--phase-scale 25 --asinh-q 10 --hi-green-scale 0.65`.
-The default evolution is outputs 0--600 inclusive, ordered from the highest
-time-averaged `sfr10` at top left to the lowest at bottom right. `--start`,
-`--stop`, and `--stride` select a subset, while `--sfr-start` and `--sfr-stop`
-change the ranking interval.
+physical surface-density stretch across every panel and time. The default RGB
+settings are inverse BT.709 luminance compensation with half-strength blue,
+giving R/G/B gains 1.00/0.297/1.47. Gas contrast uses
+`Sigma_gas/<Sigma_gas>` on a fixed logarithmic 0.1--10 range.
+
+The default evolution is outputs 0--600 inclusive. Models are ranked by mean
+`sfr10` over 400--600 Myr and placed top-to-bottom, then left-to-right. The
+generated `model_order.csv` records rank, one-based panel row and column, model,
+ranking value, and averaging bounds. `--start`, `--stop`, and `--stride` select
+a subset, while `--sfr-start` and `--sfr-stop` change the ranking interval.
 
 `plot-suite-xz` reads the `pdf2d/x1-x3` projection integrated along the
 azimuthal direction, converts `nH` to gas surface density using the projected
