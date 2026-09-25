@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -118,6 +119,16 @@ def test_model_reduction_skips_snapshots_without_two_phase_area(
     result = prfm_module.reduce_model_prfm(model, time_bounds=(200, 600))
     assert result["time"].tolist() == [200.0, 600.0]
     assert "Skipping model dump 400 at t=400 Myr" in capsys.readouterr().out
+
+
+def test_prfm_relation_axis_labels_decades_only():
+    figure, axis = plt.subplots()
+    prfm_module._decorate_relation_axis(axis, "weight", "pressure")
+    axis.set_xlim(2.0e3, 8.0e4)
+    figure.canvas.draw()
+    tick_values = axis.get_xticks(minor=False)
+    assert np.allclose(np.log10(tick_values), np.round(np.log10(tick_values)))
+    plt.close(figure)
 
 
 

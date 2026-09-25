@@ -781,6 +781,8 @@ def _draw_summary_points(axis, summary, xfield, yfield, cmap, norm):
 def _decorate_relation_axis(axis, xlabel, ylabel):
     axis.set_xscale("log")
     axis.set_yscale("log")
+    axis.xaxis.set_major_locator(mpl.ticker.LogLocator(base=10, subs=(1.0,)))
+    axis.xaxis.set_minor_formatter(mpl.ticker.NullFormatter())
     axis.set_xlabel(xlabel)
     axis.set_ylabel(ylabel)
     axis.grid(alpha=0.18, which="both")
