@@ -80,6 +80,46 @@ def test_parallel_suite_reduction_preserves_model_order(monkeypatch, tmp_path):
     assert result["model"].tolist() == ["second", "first"]
 
 
+def test_model_reduction_skips_snapshots_without_two_phase_area(
+    monkeypatch, tmp_path, capsys
+):
+    model = tmp_path / "model"
+    snapshots = [
+        (index, "problem", tmp_path / f"phase{index}")
+        for index in (200, 400, 600)
+    ]
+    monkeypatch.setattr(prfm_module, "_zprof_index", lambda _: snapshots)
+    monkeypatch.setattr(
+        prfm_module, "_profile_header", lambda path: (float(path.name[5:]), [])
+    )
+    monkeypatch.setattr(
+        prfm_module, "_paths_for_dump", lambda phase7, problem, dump: ([dump], None)
+    )
+    monkeypatch.setattr(
+        prfm_module,
+        "_history_sfr",
+        lambda _: {"time": [200.0, 600.0], "sfr10": [1.0, 1.0], "sfr40": [1.0, 1.0]},
+    )
+    monkeypatch.setattr(prfm_module, "_mesh_area", lambda _: 1.0)
+
+    def fake_reduce(paths, whole, area, **kwargs):
+        if paths[0] == 400:
+            raise prfm_module.UndefinedTwoPhasePressure(
+                "two-phase midplane area is non-positive"
+            )
+        row = {"time": float(paths[0]), "pressure_total": 1.0,
+               "pressure_delta_total": 1.0}
+        for field, _, _ in PRESSURE_COMPONENTS:
+            row[field] = 1.0
+            row[field.replace("pressure_", "pressure_delta_")] = 1.0
+        return row
+
+    monkeypatch.setattr(prfm_module, "reduce_zprof_snapshot", fake_reduce)
+    result = prfm_module.reduce_model_prfm(model, time_bounds=(200, 600))
+    assert result["time"].tolist() == [200.0, 600.0]
+    assert "Skipping model dump 400 at t=400 Myr" in capsys.readouterr().out
+
+
 
 def _write_zprof(path, time, fields, rows):
     header = "# Athena vertical profile at t={}\n".format(time)

@@ -80,6 +80,10 @@ TWO_PHASE_INDICES = (7, 11, 12, 13)
 PROFILE_TIME = re.compile(r"t=([+\-0-9.eE]+)")
 PROFILE_NAME = re.compile(r"^(?P<problem>.+)\.(?P<dump>\d+)\.phase7\.zprof$")
 
+
+class UndefinedTwoPhasePressure(ValueError):
+    """The two-phase midplane has no area, so pressure cannot be measured."""
+
 # The reference pyathena unit convention uses m_H = 1.008 atomic mass units.
 AMU_CGS = 1.66053906660e-24
 ZPROF_PRESSURE_OVER_KB = 1.4271 * 1.008 * AMU_CGS * KM_CGS**2 / KB_CGS
@@ -305,7 +309,7 @@ def reduce_zprof_snapshot(
     }
     area_two_phase = mid["A"]
     if not np.isfinite(area_two_phase) or area_two_phase <= 0.0:
-        raise ValueError("two-phase midplane area is non-positive")
+        raise UndefinedTwoPhasePressure("two-phase midplane area is non-positive")
     dz = float(np.median(np.diff(reference_z)))
     if not np.allclose(np.diff(reference_z), dz):
         raise ValueError("z-profile coordinates must be uniformly spaced")
@@ -527,14 +531,22 @@ def reduce_model_prfm(
         use_profile = return_profiles and (
             profile_time_bounds[0] <= dump_time <= profile_time_bounds[1]
         )
-        reduced = reduce_zprof_snapshot(
-            phase_paths,
-            whole,
-            horizontal_area,
-            midplane_half_width=midplane_half_width,
-            top_half_width=top_half_width,
-            return_profile=use_profile,
-        )
+        try:
+            reduced = reduce_zprof_snapshot(
+                phase_paths,
+                whole,
+                horizontal_area,
+                midplane_half_width=midplane_half_width,
+                top_half_width=top_half_width,
+                return_profile=use_profile,
+            )
+        except UndefinedTwoPhasePressure as error:
+            print(
+                f"Skipping {Path(model).name} dump {dump_id} "
+                f"at t={dump_time:g} Myr: {error}",
+                flush=True,
+            )
+            continue
         if use_profile:
             row, profile = reduced
             profiles.append(profile)
@@ -578,8 +590,12 @@ def reduce_model_prfm(
                 f"{Path(model).name}: {index}/{len(selected)} zprof dumps",
                 flush=True,
             )
+    if not rows:
+        raise ValueError(f"{model} has no valid two-phase PRFM snapshots")
     time_series = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
     if return_profiles:
+        if not profiles:
+            raise ValueError(f"{model} has no valid PRFM profiles in {profile_time_bounds}")
         return time_series, _summarize_vertical_profiles(
             profiles, model, profile_time_bounds
         )
